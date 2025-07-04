@@ -977,7 +977,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         Continuously render the environment, including the robot, humans, and their activities.
         """
         self.get_camera_image()
-        #self.render_human_activity()
+        self.render_human_activity()
 
     def step(self, action, update=True):
         # print('Step', self.envStepCounter)

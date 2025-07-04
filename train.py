@@ -201,7 +201,7 @@ def main():
                           'time_diff': (end - start + time_diff)}
             torch.save(actor_critic.state_dict(), os.path.join(save_path, '%.5i' % j + ".pt"))
             torch.save(checkpoint, os.path.join(save_path, '%.5i' % j + "_checkpoint.pt"))
-
+        '''
         if len(episode_rewards) > 1:
             total_num_steps = (j + 1) * config.training.num_processes * config.ppo.num_steps
             end = time.time()
@@ -209,7 +209,7 @@ def main():
                 "{:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n".format(
                 j, total_num_steps, int(total_num_steps / (end - start + time_diff)), len(episode_rewards),
                 np.mean(episode_rewards), np.median(episode_rewards), np.min(episode_rewards), np.max(episode_rewards)))
-
+        '''
         # Logging updates
         if j % config.training.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * config.training.num_processes * config.ppo.num_steps
