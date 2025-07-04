@@ -698,10 +698,10 @@ class CrowdSim3DTB(CrowdSimVarNum):
             self.physicsClientId = self._p._client
 
             assert self._p.isNumpyEnabled() == 1
-            p.setRealTimeSimulation(1)
+            # 这里调整由1-0
+            p.setRealTimeSimulation(0)
 
             # 调整摄像头视角
-            
             self._p.resetDebugVisualizerCamera(
                 cameraDistance=10,
                 cameraYaw=30,
@@ -849,9 +849,16 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # assign uids to humans and robot, and reset human & rob pos here
         for i in range(self.human_num):
             # find a free uid and assign it to human i
+            '''
+            print("human_num:", self.human_num,
+                "max_human_num:", self.max_human_num,
+                "static_human_num:", self.static_human_num,
+                "dyn_human_num:", self.dynanmic_human_num)
+            '''
+
             cur_uid = self.free_human_uids.pop()
             self.humans[i].uid = cur_uid
-            # print('human', i, 'uid:', cur_uid)
+            # print('human', i, 'uid:', cur_uid
             self.used_human_uids.append(cur_uid)
             # height = np.random.uniform(0.2, 1.5)
             self._p.resetBasePositionAndOrientation(self.humans[i].uid,
@@ -927,17 +934,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         new_left, new_right = left, right
         left_noise, right_noise = np.random.normal(0, 0.15, size=2)
         return new_left + left_noise, new_right + right_noise
-    '''
-    def render_human_activity(self):
-        """
-        Render the activity of each human in the environment next to their position.
-        """
-        for human in self.humans:
-            if human.activity:
-                # Render the activity as text at the human's position
-                activity_text = f"Activity: {human.activity}"
-                p.addUserDebugText(activity_text, [human.px, human.py, self.config.humans.height + 0.5], textSize=1, lifeTime=0.1)
-    '''
+
 
     def clear_all_activity_texts(self):
         """
@@ -980,7 +977,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         Continuously render the environment, including the robot, humans, and their activities.
         """
         self.get_camera_image()
-        self.render_human_activity()
+        #self.render_human_activity()
 
     def step(self, action, update=True):
         # print('Step', self.envStepCounter)
@@ -1007,8 +1004,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # simulate the turtlebot dynamics
         left, right = self.tb2_dynamics(left, right)
 
-        #
-        # print(left, right)
         # todo: what should be the value of force (maximum motor force)?
         p.setJointMotorControl2(self.robot.uid, 0, p.VELOCITY_CONTROL, targetVelocity=left, force=10)
         p.setJointMotorControl2(self.robot.uid, 1, p.VELOCITY_CONTROL, targetVelocity=right, force=10)

@@ -109,7 +109,7 @@ def main():
     # Allow multi-GPU usage for larger batch sizes
     nn.DataParallel(actor_critic).to(device)
 
-    # Initialize PPO algorithm
+    # Initialize PPO algorithm     
     agent = algo.PPO(
         actor_critic,
         config.ppo.clip_param,
@@ -187,6 +187,7 @@ def main():
 
         rollouts.compute_returns(next_value, config.ppo.use_gae, config.reward.gamma, config.ppo.gae_lambda,
                                  config.training.use_proper_time_limits)
+        # Update the agent
         value_loss, action_loss, dist_entropy = agent.update(rollouts)
         rollouts.after_update()
 
@@ -200,6 +201,14 @@ def main():
                           'time_diff': (end - start + time_diff)}
             torch.save(actor_critic.state_dict(), os.path.join(save_path, '%.5i' % j + ".pt"))
             torch.save(checkpoint, os.path.join(save_path, '%.5i' % j + "_checkpoint.pt"))
+
+        if len(episode_rewards) > 1:
+            total_num_steps = (j + 1) * config.training.num_processes * config.ppo.num_steps
+            end = time.time()
+            print("Updates {}, num timesteps {}, FPS {}\n Last {} training episodes: mean/median reward "
+                "{:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n".format(
+                j, total_num_steps, int(total_num_steps / (end - start + time_diff)), len(episode_rewards),
+                np.mean(episode_rewards), np.median(episode_rewards), np.min(episode_rewards), np.max(episode_rewards)))
 
         # Logging updates
         if j % config.training.log_interval == 0 and len(episode_rewards) > 1:

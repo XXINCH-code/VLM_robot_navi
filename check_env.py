@@ -40,6 +40,7 @@ if __name__ == '__main__':
 
     done = False       # Track if an episode has ended
     
+    '''
     for i in range(2000):
         action = np.random.choice(8)                # Select random action
         obs, reward, done, info = env.step(action)  # Take action, receive next state, reward, and completion flag
@@ -51,4 +52,13 @@ if __name__ == '__main__':
             print(str(info))
             env.clear_all_activity_texts()
             env.reset()
+    '''
+    from time import time
+    t0 = time()
+    for _ in range(1000):
+        obs,_,done,_ = env.step(env.action_space.sample())
+        if done:
+            env.reset()
+    print('平均每 step 用时', (time()-t0)/1000)
+    
     env.close()  # Close the environment after completing the loop

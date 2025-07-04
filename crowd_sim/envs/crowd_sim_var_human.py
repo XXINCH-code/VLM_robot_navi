@@ -121,8 +121,10 @@ class CrowdSimVarNum(CrowdSim):
                                 and self.line_intersects_rectangles(px, py, gx, gy, self.cur_obstacles) >= num_obs_intersects
 
                 else:
-                    pass_cond = not self.circle_in_obstacles(gx, gy, self.robot.radius * 2) \
-                                and not self.circle_in_obstacles(px, py, self.robot.radius * 2)
+                    #pass_cond = not self.circle_in_obstacles(gx, gy, self.robot.radius * 2) \
+                    #            and not self.circle_in_obstacles(px, py, self.robot.radius * 2)
+                    pass_cond = not self.circle_in_obstacles(gx, gy, self.robot.radius) \
+                                and not self.circle_in_obstacles(px, py, self.robot.radius)
             else:
                 pass_cond = self.config.robot.min_goal_dist <= self.goal_dist <= self.config.robot.max_goal_dist
 
@@ -160,6 +162,7 @@ class CrowdSimVarNum(CrowdSim):
 
         self.generate_random_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
         self.human_num = self.dynanmic_human_num + self.static_human_num
+        #self.max_human_num = self.human_num + self.config.sim.human_num_range + self.config.sim.static_human_range
 
         self.last_human_states = np.zeros((self.human_num, 5))
         # set human ids
@@ -243,8 +246,10 @@ class CrowdSimVarNum(CrowdSim):
             collide_obs = False
             # check collision of start and goal position with static obstacles
             if self.add_static_obs:
-                start_collision = self.circle_in_obstacles(px, py, human.radius + self.discomfort_dist)
-                goal_collision = self.circle_in_obstacles(gx, gy, human.radius + self.discomfort_dist)
+                #start_collision = self.circle_in_obstacles(px, py, human.radius + self.discomfort_dist)
+                #goal_collision = self.circle_in_obstacles(gx, gy, human.radius + self.discomfort_dist)
+                start_collision = self.circle_in_obstacles(px, py, human.radius)
+                goal_collision = self.circle_in_obstacles(gx, gy, human.radius)
                 if start_collision or goal_collision:
                     collide_obs = True
                     # print('collide obs')

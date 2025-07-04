@@ -115,8 +115,8 @@ class Config(object):
     # the range of human_num is human_num-human_num_range~human_num+human_num_range
     sim.human_num_range = 2
     # number of static humans
-    sim.static_human_num = 2
-    sim.static_human_range = 0
+    sim.static_human_num = 0#2
+    sim.static_human_range = 0#1
     # actual human num is in [human_num-human_num_range, human_num+human_num_range]
     # warning: may have problems if human_num - human_num_range < observed_human_num
 
@@ -326,6 +326,7 @@ class Config(object):
                                             [[7, 5, 3], [2, 3, 1]]
                                             ]
         
+
         elif env.csl_workspace_type == 'corner':
             divider_width = 6
             fixed_obs.cylinder_radius = 0.5 # 0.45
@@ -354,12 +355,12 @@ class Config(object):
                                                        [200 - fixed_obs.cylinder_radius*100, 500 - fixed_obs.cylinder_radius*100],
                                                        [200 - fixed_obs.cylinder_radius*100, 0 - fixed_obs.cylinder_radius*100]
                                                        ]) / 100.
-            fixed_obs.shapes = np.array([1] * 11 + [0] * 2)
+            fixed_obs.shapes = np.array([1] * 10 + [0] * 2)
 
             # define human routes based on map
-            human_flow.static_regions = np.array([[310, 570, -100, 100], [80, 150, 500, 600], 
-                                                  [310, 570, 350, 600],
-                                                  [-80, -20, 130, 300]
+            human_flow.static_regions = np.array([[310, 570, -100, 100], [310, 570, 400, 600], 
+                                                  [80, 140, 580, 750],
+                                                  [-90, -20, 150, 300]
                                                   ]) / 100.
             # will be triggered ONLY IF sim.static_obs = True and sim.random_obs = False
             # key: region number, value: [x_low, x_high, y_low, y_high] of the rectangular shaped region
@@ -367,14 +368,14 @@ class Config(object):
                                   1: np.array([200, 300, -250, -150]) / 100.,
                                   1.5: np.array([50, 200, -250, -100]) / 100.,
                                   2: np.array([0, 100, 0, 100]) / 100.,
-                                  3: np.array([-50, 0, 350, 450]) / 100.,
-                                  3.5: np.array([0, 50, 600, 700]) / 100.,
-                                  4: np.array([-20, 80, 800, 900]) / 100.,
+                                  3: np.array([-50, 25, 325, 475]) / 100.,
+                                  3.5: np.array([-50, 0, 600, 700]) / 100.,
+                                  4: np.array([-50, 100, 800, 950]) / 100.,
                                   5: np.array([300, 500, 890, 950]) / 100.,
                                   6: np.array([-400, -200, 900, 1010]) / 100.,
-                                  7: np.array([-640, -570, 370, 470]) / 100.,
-                                  7.5: np.array([-570, -500, 370, 430]) / 100.,
-                                  7.75: np.array([-710, -640, 370, 470]) / 100.,
+                                  7: np.array([-650, -600, 370, 470]) / 100.,
+                                  7.5: np.array([-550, -500, 370, 430]) / 100.,
+                                  7.75: np.array([-750, -700, 370, 470]) / 100.,
                                   8: np.array([-750, -550, 1000, 1200]) / 100.,
                                   8.5: np.array([-600, -500, 900, 1000]) / 100.,
                                   }
@@ -398,14 +399,14 @@ class Config(object):
             
             human_flow.correlated_routes = [
                 #corner
-                [[7, 7.5, 3, 2, 1], [8, 6, 4, 2, 1.5]],
-                [[3, 4, 6, 5], [3, 3, 3, 3.5, 6, 4, 3, 2, 1.5]],
+                [[7, 7.5, 3, 2, 1], [8, 8, 8, 8, 8, 6, 4, 2, 1.5]],
+                [[3, 4, 5], [3.5, 6, 4, 3, 2, 1.5]],
                 # 2 people
                 [[1.5, 4], [4, 2, 1.5]],
                 [[1.5, 3, 7],[6, 4, 3, 7.5]],
                 # 2 people corner
                 [[7, 7.5, 3, 2, 1], [7.5, 3, 2, 1], 
-                 [8.5, 4, 2], [8, 8.5, 4, 2]],
+                 [8.5, 8.5, 8.5, 4, 2], [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 4, 2]],
                 # many people
                 [[7, 3, 3.5, 4, 5], [7.5, 3, 3.5, 4, 5],
                  [7.75, 3, 2, 1, 0]]
@@ -697,7 +698,7 @@ class Config(object):
     humans.random_policy_changing = False
 
     # a human may have diffrferent activities
-    humans.dynamic_activity = ['walking', 'running', 'carrying']
+    humans.dynamic_activity = ['walking', 'carrying']
     humans.static_activity = ['stationary', 'talking']
 
     # add noise to observation or not

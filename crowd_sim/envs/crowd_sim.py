@@ -186,7 +186,7 @@ class CrowdSim(gym.Env):
         self.last_human_states = np.zeros((self.human_num, 5))
 
         self.human_num_range = config.sim.human_num_range
-        self.max_human_num = config.sim.human_num + self.human_num_range + config.sim.static_human_num + config.sim.static_human_range
+        self.max_human_num = config.sim.human_num + self.human_num_range + config.sim.static_human_num + config.sim.static_human_range + 2
         assert config.sim.human_num >= self.human_num_range
         assert config.sim.static_human_num >= config.sim.static_human_range
         self.min_human_num = config.sim.human_num - self.human_num_range + config.sim.static_human_num - config.sim.static_human_range
@@ -254,22 +254,23 @@ class CrowdSim(gym.Env):
         :param human_num:
         :return:
         """
+
         # initial min separation distance to avoid danger penalty at beginning
         for i in range(human_num):
             human = self.generate_circle_crossing_human()
-            #self.generate_human_activities(human)
+            self.generate_human_activities(human)
             if human is not None:
                 self.humans.append(human)
-
+        ''' 
         for i in range(static_human_num):
             idx = np.random.choice(len(self.config.human_flow.static_regions))
             static_human = self.generate_circle_crossing_human(region_idx=idx, static=True)
             #static_human = self.generate_circle_crossing_human(static=True)
             static_human.isObstacle = True
-            #self.generate_human_activities(static_human)
+            self.generate_human_activities(static_human)
             self.humans.append(static_human)
             
-            if static_human.activity == 'talking' and idx != 1:  # idx=1 is the small region
+            if static_human.activity == 'talking':  # idx=1 is the small region
                 new_idx = idx
                 new_static_human = self.generate_circle_crossing_human(region_idx=new_idx, static=True)
                 new_static_human.isObstacle = True
@@ -277,7 +278,44 @@ class CrowdSim(gym.Env):
                 new_static_human.v_max = 0.0  
                 self.humans.append(new_static_human)
                 self.static_human_num += 1
+        '''
+        
+        used_regions = set()
+        region_num = len(self.config.human_flow.static_regions)
+
+        if static_human_num  > region_num:
+            print(f"[Warning] static_human_num={static_human_num } > available regions={region_num}, allowing region reuse.")
+
+        count = 0
+        while count < static_human_num:
+            idx = np.random.randint(region_num)
+
+            # 如果区域已被用过，则跳过（除非允许重复）
+            if idx in used_regions and static_human_num  <= region_num:
+                continue
             
+            if idx in used_regions and static_human_num  > region_num:
+                idx = np.random.randint(2)
+
+            used_regions.add(idx)
+
+            static_human = self.generate_circle_crossing_human(region_idx=idx, static=True)
+            static_human.isObstacle = True
+            self.generate_human_activities(static_human)
+            self.humans.append(static_human)
+            count += 1
+            
+            # 处理“talking”行为的人（成对出现）
+            if static_human.activity == 'talking':
+                new_static_human = self.generate_circle_crossing_human(region_idx=idx, static=True)
+                new_static_human.isObstacle = True
+                new_static_human.activity = 'talking'
+                new_static_human.v_max = 0.0
+                self.humans.append(new_static_human)
+                self.static_human_num += 1
+
+            
+                
 
     # generate and return a static human
     # position: (px, py) for fixed position, or None for random position
