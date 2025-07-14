@@ -871,15 +871,15 @@ class Config(object):
     training.cuda_deterministic = False  # sets flags for determinism when using CUDA (potentially slow!)
     training.cuda = True  # use CUDA for training
     training.num_processes = 28  # was 16, how many training CPU processes to use
-    # todo: change this
+    # the saving directory for train.py
     training.output_dir = 'data/ours_RH_HH_cornerEnv_with_staticHuman' 
-    #training.output_dir = 'data/ours_RH_HH_hallwayEnv_new'  # the saving directory for train.py
+    #training.output_dir = 'data/ours_RH_HH_corridorEnv' 
     # resume training from an existing checkpoint or not
     # none: train RL from scratch, rl: load a RL weight
-    training.resume = 'none'
+    training.resume = 'rl'
     # if resume != 'none', load from the following checkpoint
     #training.load_path = 'trained_models/ours_HH_RH_randEnv/checkpoints/237800.pt'
-    training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/00200.pt'
+    training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/64800.pt'
     #training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/18000.pt'
     training.overwrite = True  # whether to overwrite the output directory in training
     training.num_threads = 1  # number of threads used for intraop parallelism on CPU

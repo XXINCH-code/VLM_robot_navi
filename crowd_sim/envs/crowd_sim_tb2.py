@@ -982,6 +982,10 @@ class CrowdSim3DTB(CrowdSimVarNum):
     def step(self, action, update=True):
         # print('Step', self.envStepCounter)
 
+        # Explain the action
+        # When predicting an action, the human currently uses the isObstacle Bool variable
+        # defined in the human class to determine whether the human is stationary or moving.
+        # reset()→ generate_robot_humans()→ generate_random_human_position()→ generate_circle_crossing_human()
         human_actions = self.get_human_actions()
 
         # compute reward and episode info
