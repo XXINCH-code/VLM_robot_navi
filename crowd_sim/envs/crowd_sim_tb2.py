@@ -200,7 +200,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
             self.action_space = gym.spaces.Discrete(len(self.action_convert))
 
-
     def create_single_player_scene(self, bullet_client):
         """
 		Setup physics engine and simulation
@@ -211,24 +210,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
         return SingleRobotEmptyScene(bullet_client, gravity=(0, 0, -9.8),
                                      timestep=self.config.pybullet.sim_timestep, frame_skip=self.config.pybullet.frameSkip,
                                      render=self.config.sim.render)
-
-    def loadTex(self):
-        wallTexList = os.listdir(self.wallTexPath)
-        idx = np.arange(len(wallTexList))
-        self.np_random.shuffle(idx)
-
-        # load texture for walls
-        for i in range(self.config.pybullet.numTexture):
-            # key=fileName, val=textureID. If we have already loaded the texture, no need to reload and drain the memory
-            texID = self._p.loadTexture(os.path.join(self.wallTexPath, wallTexList[idx[i]]))
-            self.wallTextureList.append(texID)
-
-        # load texture for objects
-        objTextureList = os.listdir(self.objTexPath)
-        for i in range(len(objTextureList)):
-            texID = self._p.loadTexture(os.path.join(self.objTexPath, objTextureList[i]))
-            self.objTexDict[objTextureList[i]] = texID
-        self.objTexList = list(self.objTexDict.keys())
 
     def loadArena(self):
         # load arena: inner wall
@@ -250,6 +231,172 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
 
 
+    # -----------------------------------------------------------------
+    # Function block for Lidar set
+    # -----------------------------------------------------------------
+    # if camera_fov is True, use the camera FOV to perform ray test (to get human detections, used in self.get_num_human_in_fov())
+    # otherwise, use the lidar with 360 FOV to perform ray test (to get raw lidar pc including obstacles, as ob['point_clouds'])
+    def ray_test(self, camera_fov=False):
+        """
+        perform a lidar ray test on all humans and obstacles in the scene
+        save the current range readings in self.closest_hit_dist, the object IDs in self.closest_hit_id, the uids of all detected humans in self.visible_human_uids
+        """
+        if camera_fov:
+            ray_num = self.cam_ray_num
+            ray_angles = self.cam_ray_angles
+            height = self.camera_height
+        else:
+            ray_num = self.ray_num
+            ray_angles = self.ray_angles
+            height = self.lidar_height
+        # start xyz pos of all rays in world frame
+        startPoint = np.array([[self.robot.px, self.robot.py, height]])
+        self.rayFrom = np.repeat(startPoint, ray_num, axis=0) # [ray_num, 3]
+        # end xyz pos of all rays
+        # robot frame
+        rayTo = np.array([self.robot.sensor_range * np.cos(self.robot.theta + ray_angles),
+                          self.robot.sensor_range * np.sin(self.robot.theta + ray_angles),
+                          np.zeros([ray_num])]) # [3, ray_num]
+        # world frame
+        # rayTo = np.array([self.robot.sensor_range * np.cos(self.ray_angles),
+        #                   self.robot.sensor_range * np.sin(self.ray_angles),
+        #                   np.zeros([self.ray_num])])  # [3, ray_num]
+        # end xyz pos of all rays in world frame
+        self.rayTo = rayTo.T + self.rayFrom # [ray_num, 3]
+
+        # do the ray test, store the results
+        # result is a list of tuple that contains [objectUniqueId, linkIndex, hit fraction, hit position, hit normal]
+        results = p.rayTestBatch(self.rayFrom, self.rayTo)
+
+        # store the distances between robot and hit objects by lidar
+        self.closest_hit_dist = np.zeros(ray_num)
+        # store the ground truth hit object ids
+        self.closest_hit_id = -np.ones(ray_num)
+
+        # uids of human that can be detected by robot's Lidar
+        self.visible_human_uids = set()
+
+        # parse the results and visualize lidar rays
+
+        for i in range(ray_num):
+            self.closest_hit_dist[i] = results[i][2] * self.robot.sensor_range
+            # only add human ids, assume other objects are undetectable with 2D lidar
+            if results[i][0] in self.used_human_uids:
+                self.closest_hit_id[i] = results[i][0]
+                self.visible_human_uids.add(results[i][0]) # set can avoid duplicates
+            if self.config.lidar.visualize_rays:
+                if camera_fov:
+                    pass
+                else:
+                    # pass
+                    if len(self.rayIDs) < ray_num:  # draw these rays out
+                        self.rayIDs.append(p.addUserDebugLine(self.rayFrom[i], self.rayTo[i], self.rayMissColor))
+
+                    # this ray didn't hit anything
+                    if results[i][0] == -1:
+                        p.addUserDebugLine(self.rayFrom[i], self.rayTo[i], self.rayMissColor,
+                                           replaceItemUniqueId=self.rayIDs[i])
+                    # this ray hit an object
+                    else:
+                        p.addUserDebugLine(self.rayFrom[i], results[i][3], self.rayHitColor,
+                                           replaceItemUniqueId=self.rayIDs[i])
+
+    def render_lidar_pc(self):
+        '''
+        plot the lidar point clouds as black dots
+        '''
+        pc_list = np.ones((self.ray_num, 3)) * self.lidar_height
+        # convert from polar coordinate to Eulidean coordinate
+        pc_list[:, 0] = self.closest_hit_dist * np.cos(self.ray_angles) + self.robot.px
+        pc_list[:, 1] = self.closest_hit_dist * np.sin(self.ray_angles) + self.robot.py
+        color = np.zeros((self.ray_num, 3))
+        if len(self.cam_pc_ids) == 0:
+            self.cam_pc_ids.append(p.addUserDebugPoints(pc_list, color.tolist(), pointSize=2))
+        else:
+            p.addUserDebugPoints(pc_list, color.tolist(), replaceItemUniqueId=self.cam_pc_ids[0], pointSize=2)
+
+    def get_num_human_in_fov(self):
+        # use ray test to check visibility of each human
+        human_ids = []
+        humans_in_view = []
+        num_humans_in_view = 0
+
+        # perform ray test, update self.visible_human_uids
+        # we use zed camera to detect humans, so we need to add a camera FOV here
+        self.ray_test(camera_fov=True)
+
+        for i in range(self.human_num):
+            visible = True if self.humans[i].uid in self.visible_human_uids else False
+            if visible:
+                humans_in_view.append(self.humans[i])
+                num_humans_in_view = num_humans_in_view + 1
+                human_ids.append(True)
+            else:
+                human_ids.append(False)
+
+        return humans_in_view, num_humans_in_view, human_ids
+
+    
+    
+    # -----------------------------------------------------------------
+    # Function block for generating observations
+    # -----------------------------------------------------------------
+    '''
+    def generate_ob(self, reset):
+        # print("check robot node inside 1: ", ob["robot_node"])
+        ob = {}
+
+        # nodes
+        visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
+
+        if self.config.ob_space.robot_state == 'absolute':
+            ob['robot_node'] = self.robot.get_changing_state_list()
+        else:
+            ob['robot_node'] = self.robot.get_changing_state_list_goal_offset()
+
+        # print("check robot node inside 2: ", ob["robot_node"])
+
+        self.update_last_human_states(self.human_visibility, reset=reset)
+
+        # edges
+        ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
+
+        # ([relative px, relative py, disp_x, disp_y], human id)
+        # make sure there's at least one placeholder
+        if self.config.ob_space.add_human_vel:
+            all_spatial_edges = np.ones((max(1, self.max_human_num), 4)) * np.inf
+        else:
+            all_spatial_edges = np.ones((max(1, self.max_human_num), 2)) * np.inf
+
+        for i in range(self.human_num):
+            if self.human_visibility[i]:
+                # vector pointing from human i to robot
+                relative_pos = np.array(
+                    [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
+                all_spatial_edges[self.humans[i].id, :2] = relative_pos
+                if self.config.ob_space.add_human_vel:
+                    # todo: for now the human velocities are in world frame, check zed2 for frame transformation
+                    all_spatial_edges[self.humans[i].id, 2:] = self.last_human_states[i, 2:4]
+        # sort all humans by distance (invisible humans will be in the end automatically)
+        ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x[:2])))
+        ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
+
+        ob['detected_human_num'] = num_visibles
+        # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
+        if ob['detected_human_num'] == 0:
+            ob['detected_human_num'] = 1
+
+        # update self.observed_human_ids
+        self.observed_human_ids = np.where(self.human_visibility)[0]
+        self.ob = ob
+
+        return ob
+    '''
+    
+
+    # -----------------------------------------------------------------
+    # Function block for env reset and scenario creation
+    # -----------------------------------------------------------------
     def create_object(self, px, py, radius, height, shape, color=None, halfExtents=None):
         """
         Create a 3D object with given params, returns its object ID
@@ -334,300 +481,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
                                                 self._p.getQuaternionFromEuler([0, 0, 0]))
 
         return objID
-
-    # if camera_fov is True, use the camera FOV to perform ray test (to get human detections, used in self.get_num_human_in_fov())
-    # otherwise, use the lidar with 360 FOV to perform ray test (to get raw lidar pc including obstacles, as ob['point_clouds'])
-    def ray_test(self, camera_fov=False):
-        """
-        perform a lidar ray test on all humans and obstacles in the scene
-        save the current range readings in self.closest_hit_dist, the object IDs in self.closest_hit_id, the uids of all detected humans in self.visible_human_uids
-
-        """
-        if camera_fov:
-            ray_num = self.cam_ray_num
-            ray_angles = self.cam_ray_angles
-            height = self.camera_height
-        else:
-            ray_num = self.ray_num
-            ray_angles = self.ray_angles
-            height = self.lidar_height
-        # start xyz pos of all rays in world frame
-        startPoint = np.array([[self.robot.px, self.robot.py, height]])
-        self.rayFrom = np.repeat(startPoint, ray_num, axis=0) # [ray_num, 3]
-        # end xyz pos of all rays
-        # robot frame
-        rayTo = np.array([self.robot.sensor_range * np.cos(self.robot.theta + ray_angles),
-                          self.robot.sensor_range * np.sin(self.robot.theta + ray_angles),
-                          np.zeros([ray_num])]) # [3, ray_num]
-        # world frame
-        # rayTo = np.array([self.robot.sensor_range * np.cos(self.ray_angles),
-        #                   self.robot.sensor_range * np.sin(self.ray_angles),
-        #                   np.zeros([self.ray_num])])  # [3, ray_num]
-        # end xyz pos of all rays in world frame
-        self.rayTo = rayTo.T + self.rayFrom # [ray_num, 3]
-
-        # do the ray test, store the results
-        # result is a list of tuple that contains [objectUniqueId, linkIndex, hit fraction, hit position, hit normal]
-        results = p.rayTestBatch(self.rayFrom, self.rayTo)
-
-        # store the distances between robot and hit objects by lidar
-        self.closest_hit_dist = np.zeros(ray_num)
-        # store the ground truth hit object ids
-        self.closest_hit_id = -np.ones(ray_num)
-
-        # uids of human that can be detected by robot's Lidar
-        self.visible_human_uids = set()
-
-        # parse the results and visualize lidar rays
-
-        for i in range(ray_num):
-            self.closest_hit_dist[i] = results[i][2] * self.robot.sensor_range
-            # only add human ids, assume other objects are undetectable with 2D lidar
-            if results[i][0] in self.used_human_uids:
-                self.closest_hit_id[i] = results[i][0]
-                self.visible_human_uids.add(results[i][0]) # set can avoid duplicates
-            if self.config.lidar.visualize_rays:
-                if camera_fov:
-                    pass
-                    # if len(self.cam_rayIDs) < ray_num:  # draw these rays out
-                    #     self.cam_rayIDs.append(p.addUserDebugLine(self.rayFrom[i], self.rayTo[i], self.cam_rayMissColor))
-                    #
-                    # # this ray didn't hit anything
-                    # if results[i][0] == -1:
-                    #     p.addUserDebugLine(self.rayFrom[i], self.rayTo[i], self.cam_rayMissColor,
-                    #                        replaceItemUniqueId=self.cam_rayIDs[i])
-                    # # this ray hit an object
-                    # else:
-                    #     p.addUserDebugLine(self.rayFrom[i], results[i][3], self.cam_rayHitColor,
-                    #                        replaceItemUniqueId=self.cam_rayIDs[i])
-                else:
-                    # pass
-                    if len(self.rayIDs) < ray_num:  # draw these rays out
-                        self.rayIDs.append(p.addUserDebugLine(self.rayFrom[i], self.rayTo[i], self.rayMissColor))
-
-                    # this ray didn't hit anything
-                    if results[i][0] == -1:
-                        p.addUserDebugLine(self.rayFrom[i], self.rayTo[i], self.rayMissColor,
-                                           replaceItemUniqueId=self.rayIDs[i])
-                    # this ray hit an object
-                    else:
-                        p.addUserDebugLine(self.rayFrom[i], results[i][3], self.rayHitColor,
-                                           replaceItemUniqueId=self.rayIDs[i])
-
-
-
-
-    def render_lidar_pc(self):
-        '''
-        plot the lidar point clouds as black dots
-        '''
-        pc_list = np.ones((self.ray_num, 3)) * self.lidar_height
-        # convert from polar coordinate to Eulidean coordinate
-        pc_list[:, 0] = self.closest_hit_dist * np.cos(self.ray_angles) + self.robot.px
-        pc_list[:, 1] = self.closest_hit_dist * np.sin(self.ray_angles) + self.robot.py
-        color = np.zeros((self.ray_num, 3))
-        if len(self.cam_pc_ids) == 0:
-            self.cam_pc_ids.append(p.addUserDebugPoints(pc_list, color.tolist(), pointSize=2))
-        else:
-            p.addUserDebugPoints(pc_list, color.tolist(), replaceItemUniqueId=self.cam_pc_ids[0], pointSize=2)
-
-
-    def get_num_human_in_fov(self):
-        # use ray test to check visibility of each human
-        human_ids = []
-        humans_in_view = []
-        num_humans_in_view = 0
-
-        # perform ray test, update self.visible_human_uids
-        # we use zed camera to detect humans, so we need to add a camera FOV here
-        self.ray_test(camera_fov=True)
-
-        for i in range(self.human_num):
-            visible = True if self.humans[i].uid in self.visible_human_uids else False
-            if visible:
-                humans_in_view.append(self.humans[i])
-                num_humans_in_view = num_humans_in_view + 1
-                human_ids.append(True)
-            else:
-                human_ids.append(False)
-
-        return humans_in_view, num_humans_in_view, human_ids
-
-    # randomly change the shape of pybullet obstacles, the number of changed obstacle = obs_num
-    # Can only be called in reset function!!!
-    # Note: please don't call it in the middle of an episode, outside of reset function! Otherwise, the new object may overlap with existing objects
-    def change_obs_shape_randomly(self, obs_num):
-        # determine the size of all new obs
-        obs_sizes = np.clip(np.random.normal(self.config.sim.obs_size_mean, self.config.sim.obs_size_std,
-                                                  size=(obs_num, 2)), a_min=self.config.sim.obs_min_size,
-                                 a_max=self.config.sim.obs_max_size)
-        for i in range(obs_num):
-            # randomly delete old obs
-            objID_delete = np.random.choice(self.all_obs_uids)
-            # delete pybullet object
-            self._p.removeBody(objID_delete)
-
-            # self.free_obs_uids, self.all_obs_uids (deepcopy of self.free_obs_uids), self.used_obs_uids
-            self.all_obs_uids.remove(objID_delete)
-
-            # self.obstacles
-            for j in range(len(self.obstacles)):
-                if self.obstacles[j, -1] == objID_delete:
-                    # print('deleted obj width, height:', self.obstacles[j, 2:4])
-                    # print('new obj width, height:', obs_sizes[i])
-                    self.obstacles = np.delete(self.obstacles, j, 0)
-                    break
-
-            # insert new obstacle
-            # generate pybullet object
-            objID_add = self.create_object(50, 50, radius=None, height=1,
-                                                         shape=p.GEOM_BOX,
-                                                         color=self.obs_color,
-                                                         # assume all objects' true heights are 1, will reset offset in z-axis later
-                                                         halfExtents=[obs_sizes[i, 0] / 2, obs_sizes[i, 1] / 2, 1])
-            # update self.free_obs_uids, self.all_obs_uids, self.used_obs_uids
-            self.all_obs_uids.append(objID_add)
-
-            # update self.obstacles (list of [lower left x, lower left y, width, height, uid])
-            # todo: didn't check collision with other objects!!!!!!
-            # subtract self.config.sim.obs_size_mean so that the obstacles are approximately centered in the arena
-            x, y = np.random.uniform(-self.arena_size - self.config.sim.obs_size_mean, self.arena_size - self.config.sim.obs_size_mean, size=2)
-            self.obstacles = np.vstack([self.obstacles, [[x, y, obs_sizes[i, 0], obs_sizes[i, 1], objID_add]]])
-            # print('all obj width, height:', self.obstacles[:, 2:4])
-
-    def generate_ob(self, reset):
-        # print("check robot node inside 1: ", ob["robot_node"])
-        ob = {}
-
-        # nodes
-        visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
-
-        if self.config.ob_space.robot_state == 'absolute':
-            ob['robot_node'] = self.robot.get_changing_state_list()
-        else:
-            ob['robot_node'] = self.robot.get_changing_state_list_goal_offset()
-
-        # print("check robot node inside 2: ", ob["robot_node"])
-
-        self.update_last_human_states(self.human_visibility, reset=reset)
-
-        # edges
-        ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
-
-        # ([relative px, relative py, disp_x, disp_y], human id)
-        # make sure there's at least one placeholder
-        if self.config.ob_space.add_human_vel:
-            all_spatial_edges = np.ones((max(1, self.max_human_num), 4)) * np.inf
-        else:
-            all_spatial_edges = np.ones((max(1, self.max_human_num), 2)) * np.inf
-
-        for i in range(self.human_num):
-            if self.human_visibility[i]:
-                # vector pointing from human i to robot
-                relative_pos = np.array(
-                    [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
-                all_spatial_edges[self.humans[i].id, :2] = relative_pos
-                if self.config.ob_space.add_human_vel:
-                    # todo: for now the human velocities are in world frame, check zed2 for frame transformation
-                    all_spatial_edges[self.humans[i].id, 2:] = self.last_human_states[i, 2:4]
-        # sort all humans by distance (invisible humans will be in the end automatically)
-        ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x[:2])))
-        ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
-
-        ob['detected_human_num'] = num_visibles
-        # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
-        if ob['detected_human_num'] == 0:
-            ob['detected_human_num'] = 1
-
-        # update self.observed_human_ids
-        self.observed_human_ids = np.where(self.human_visibility)[0]
-        self.ob = ob
-
-        return ob
-
-    def render_scene(self):
-        """
-        Read rgbd image from camera, save them in self.rgb_img & self.depth_img
-        """
-        if self.config.env.scenario == 'csl_workspace' and self.config.env.csl_workspace_type == 'lounge':
-            view_matrix = p.computeViewMatrix(
-                cameraEyePosition=[0, 5, 12],
-                cameraTargetPosition=[0, 5, 0],
-                cameraUpVector=[1, 0, 0]
-            )
-        else:
-            view_matrix = p.computeViewMatrix(
-                cameraEyePosition=[-3, 4, 12],
-                cameraTargetPosition=[-3, 4, 0],
-                cameraUpVector=[1, 0, 0]
-            )
-
-        projection_matrix = p.computeProjectionMatrixFOV(
-            fov=self.render_fov, aspect=self.render_img_w/self.render_img_h, nearVal=0.05, farVal=100)
-
-        # returns [width, height, rgbPixels, depthPixels, segmentationMaskBuffer]
-        # perfect segmentation is not very realistic for floors and walls, not including it
-        _, _, self.rgb_img, _, _ = p.getCameraImage(self.render_img_w, self.render_img_h,
-                                                                 view_matrix,
-                                                                 projection_matrix,
-                                                                 shadow=False,
-                                                                 flags=self._p.ER_NO_SEGMENTATION_MASK,
-                                                                 renderer=self._p.ER_TINY_RENDERER)
-
-        # only keep (r, g, b), remove alpha
-        self.rgb_img = self.rgb_img[:, :, :-1]
-
-        # for save_slides use
-        rgbim = Image.fromarray(self.rgb_img)
-        rgbim = rgbim.crop((250/900*self.render_img_w, 200/900*self.render_img_h, 600/900*self.render_img_w, 600/900*self.render_img_h))
-        rgbim = rgbim.resize((self.render_img_w, self.render_img_h), Image.LANCZOS)
-        rgbim = rgbim.filter(ImageFilter.SHARPEN)
-        save_dir = os.path.join(self.config.training.output_dir, 'test_slideshows',
-                                str(self.min_human_num) + 'to' + str(self.max_human_num) + 'humans_' +
-                                str(self.min_obs_num) + 'to' + str(self.max_obs_num) + 'obs',
-                                self.config.camera.render_checkpoint,
-                                str(self.rand_seed) + '_' + str(self.case_counter['test'] - 1))
-        self.save_dir = save_dir
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        # 这行用于保存每一帧的图片
-        rgbim.save(os.path.join(save_dir, str(self.step_counter) +'.png'))
-        self.images.append(rgbim)
-
-    def get_camera_image(self):
-
-        basePos, baseOrientation = p.getBasePositionAndOrientation(self.robot.uid)
-        basePos = np.array(basePos)
-        matrix = p.getMatrixFromQuaternion(baseOrientation)
-        tx_vec = np.array([matrix[0], matrix[3], matrix[6]])              
-        tz_vec = np.array([matrix[2], matrix[5], matrix[8]])
-
-        self.camera_position = basePos + self.robot.radius * tx_vec + 0.5 * self.camera_height * tz_vec
-        self.camera_target = self.camera_position + 1 * tx_vec
-        self.camera_up = tz_vec
-
-        view_matrix = p.computeViewMatrix(
-            cameraEyePosition=self.camera_position,
-            cameraTargetPosition=self.camera_target,
-            cameraUpVector=self.camera_up,
-            physicsClientId=self.physicsClientId
-        )
-        if view_matrix is None:
-            raise ValueError("View matrix calculation failed!")
-
-        projection_matrix = p.computeProjectionMatrixFOV(
-            self.camera_fov, self.aspect_ratio, self.near_plane, self.far_plane, self.physicsClientId
-        )
-        
-        #image = p.getCameraImage(self.width, self.height, viewMatrix=view_matrix, projectionMatrix=projection_matrix)
-        width, height, rgbImg, depthImg, segImg = p.getCameraImage(
-            width=self.width, height=self.height,
-            viewMatrix=view_matrix,
-            projectionMatrix=projection_matrix,
-            physicsClientId=self.physicsClientId,
-        )
-
-        return width, height, rgbImg, depthImg, segImg
 
     def create_scenario(self, phase='train', test_case=None):
         ############################ 1. init the starting pose of robot and humans #############################
@@ -893,7 +746,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # for IL data collection only
         self.orca_action = np.zeros(2)
 
-
     def create_goal_object(self):
         if self.first_epi:
             # add a cone to represent robot goal
@@ -904,6 +756,51 @@ class CrowdSim3DTB(CrowdSimVarNum):
                                                 [self.robot.gx, self.robot.gy, 2],
                                                 self._p.getQuaternionFromEuler([0, 0, 0]))
 
+    def collision_checker(self):
+        '''
+        check whether robot collides with other objects
+        returns:(collision, dmin)
+                collision: True if there is a collision, False if there's no collision
+                dmin: the distance between the robot and its closest human
+        '''
+        # collision detection
+        dmin = float('inf')
+
+        collision = False
+        collision_with = None
+        # check collision with humans
+        for i, human in enumerate(self.humans):
+            contact_points = p.getContactPoints(self.robot.uid, human.uid)
+            if contact_points:
+                collision = True
+                collision_with = 'human'
+                break
+            else:
+                closest_points = p.getClosestPoints(self.robot.uid, human.uid, distance=1000.0, linkIndexA=-1,
+                                                    linkIndexB=-1)
+                if closest_points:
+                    # The closest points are typically in closest_points[0], check its distance
+                    closest_dist = closest_points[0][8]
+                    if closest_dist < dmin:
+                        dmin = closest_dist
+
+        # check collision with obstacles
+        # if collision is already True, we don't overwrite or double count the collision with obstacles
+        if not collision and self.add_static_obs:
+            for i in range(self.obs_num):
+                if p.getContactPoints(self.robot.uid, int(self.cur_obstacles[i, -1])):
+                    collision = True
+                    collision_with = 'obstacle'
+
+        # check collision with walls
+        if not collision and self.config.sim.borders:
+            # -0.5: count for the thickness of wall
+            arena_size = self.arena_size + self.config.sim.human_pos_noise_range - 0.5
+            if self.robot.px + self.robot.radius > arena_size or self.robot.px - self.robot.radius < -arena_size or \
+                    self.robot.py + self.robot.radius > arena_size or self.robot.py - self.robot.radius < -arena_size:
+                collision = True
+                collision_with = 'wall'
+        return collision, dmin, collision_with
 
     def reset(self, phase='train', test_case=None):
         # create robot, humans, and obstacles
@@ -921,21 +818,9 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
 
 
-    # given desired left and right wheel velocity in sim,
-    # return the actual left and right wheel velocity approximated from real trajectories
-    def tb2_dynamics(self, left, right):
-        left = np.clip(left, -11.5, 11.5)
-        right = np.clip(right, -11.5, 11.5)
-
-        # when an episode begins, the turtlebot needs sometime to gain speed from stationary
-        if self.step_counter < 2:
-            return 0, 0
-
-        new_left, new_right = left, right
-        left_noise, right_noise = np.random.normal(0, 0.15, size=2)
-        return new_left + left_noise, new_right + right_noise
-
-
+    # -----------------------------------------------------------------
+    # Function block for visualization in simulation
+    # -----------------------------------------------------------------
     def clear_all_activity_texts(self):
         """
         Clear all activity texts for humans in the environment.
@@ -970,7 +855,43 @@ class CrowdSim3DTB(CrowdSimVarNum):
                         [human.px, human.py, self.config.humans.height + 0.5],  # Update position of text
                         textSize=1, 
                         lifeTime=0)
-                    
+    
+    def get_camera_image(self):
+        """
+        Get the camera image from the robot's perspective.
+        """
+        basePos, baseOrientation = p.getBasePositionAndOrientation(self.robot.uid)
+        basePos = np.array(basePos)
+        matrix = p.getMatrixFromQuaternion(baseOrientation)
+        tx_vec = np.array([matrix[0], matrix[3], matrix[6]])              
+        tz_vec = np.array([matrix[2], matrix[5], matrix[8]])
+
+        self.camera_position = basePos + self.robot.radius * tx_vec + 0.5 * self.camera_height * tz_vec
+        self.camera_target = self.camera_position + 1 * tx_vec
+        self.camera_up = tz_vec
+
+        view_matrix = p.computeViewMatrix(
+            cameraEyePosition=self.camera_position,
+            cameraTargetPosition=self.camera_target,
+            cameraUpVector=self.camera_up,
+            physicsClientId=self.physicsClientId
+        )
+        if view_matrix is None:
+            raise ValueError("View matrix calculation failed!")
+
+        projection_matrix = p.computeProjectionMatrixFOV(
+            self.camera_fov, self.aspect_ratio, self.near_plane, self.far_plane, self.physicsClientId
+        )
+        
+        #image = p.getCameraImage(self.width, self.height, viewMatrix=view_matrix, projectionMatrix=projection_matrix)
+        width, height, rgbImg, depthImg, segImg = p.getCameraImage(
+            width=self.width, height=self.height,
+            viewMatrix=view_matrix,
+            projectionMatrix=projection_matrix,
+            physicsClientId=self.physicsClientId,
+        )
+
+        return width, height, rgbImg, depthImg, segImg       
 
     def keep_rendering(self):
         """
@@ -978,7 +899,83 @@ class CrowdSim3DTB(CrowdSimVarNum):
         """
         self.get_camera_image()
         self.render_human_activity()
+        self.render_lidar_pc()
 
+
+
+    # -----------------------------------------------------------------
+    # Utils for step function
+    # -----------------------------------------------------------------
+    def tb2_dynamics(self, left, right):
+        """
+        given desired left and right wheel velocity in sim,
+        return the actual left and right wheel velocity approximated from real trajectories
+        """
+        left = np.clip(left, -11.5, 11.5)
+        right = np.clip(right, -11.5, 11.5)
+
+        # when an episode begins, the turtlebot needs sometime to gain speed from stationary
+        if self.step_counter < 2:
+            return 0, 0
+
+        new_left, new_right = left, right
+        left_noise, right_noise = np.random.normal(0, 0.15, size=2)
+        return new_left + left_noise, new_right + right_noise
+    
+    def render_scene(self):
+        """
+        Read rgbd image from camera, save them in self.rgb_img & self.depth_img
+        """
+        if self.config.env.scenario == 'csl_workspace' and self.config.env.csl_workspace_type == 'lounge':
+            view_matrix = p.computeViewMatrix(
+                cameraEyePosition=[0, 5, 12],
+                cameraTargetPosition=[0, 5, 0],
+                cameraUpVector=[1, 0, 0]
+            )
+        else:
+            view_matrix = p.computeViewMatrix(
+                cameraEyePosition=[-3, 4, 12],
+                cameraTargetPosition=[-3, 4, 0],
+                cameraUpVector=[1, 0, 0]
+            )
+
+        projection_matrix = p.computeProjectionMatrixFOV(
+            fov=self.render_fov, aspect=self.render_img_w/self.render_img_h, nearVal=0.05, farVal=100)
+
+        # returns [width, height, rgbPixels, depthPixels, segmentationMaskBuffer]
+        # perfect segmentation is not very realistic for floors and walls, not including it
+        _, _, self.rgb_img, _, _ = p.getCameraImage(self.render_img_w, self.render_img_h,
+                                                                 view_matrix,
+                                                                 projection_matrix,
+                                                                 shadow=False,
+                                                                 flags=self._p.ER_NO_SEGMENTATION_MASK,
+                                                                 renderer=self._p.ER_TINY_RENDERER)
+
+        # only keep (r, g, b), remove alpha
+        self.rgb_img = self.rgb_img[:, :, :-1]
+
+        # for save_slides use
+        rgbim = Image.fromarray(self.rgb_img)
+        rgbim = rgbim.crop((250/900*self.render_img_w, 200/900*self.render_img_h, 600/900*self.render_img_w, 600/900*self.render_img_h))
+        rgbim = rgbim.resize((self.render_img_w, self.render_img_h), Image.LANCZOS)
+        rgbim = rgbim.filter(ImageFilter.SHARPEN)
+        save_dir = os.path.join(self.config.training.output_dir, 'test_slideshows',
+                                str(self.min_human_num) + 'to' + str(self.max_human_num) + 'humans_' +
+                                str(self.min_obs_num) + 'to' + str(self.max_obs_num) + 'obs',
+                                self.config.camera.render_checkpoint,
+                                str(self.rand_seed) + '_' + str(self.case_counter['test'] - 1))
+        self.save_dir = save_dir
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        # 这行用于保存每一帧的图片
+        rgbim.save(os.path.join(save_dir, str(self.step_counter) +'.png'))
+        self.images.append(rgbim)
+
+
+
+    # -----------------------------------------------------------------
+    # MAIN FUNCTION: step function for the env, called by the agent
+    # -----------------------------------------------------------------
     def step(self, action, update=True):
         # print('Step', self.envStepCounter)
 
@@ -987,6 +984,8 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # defined in the human class to determine whether the human is stationary or moving.
         # reset()→ generate_robot_humans()→ generate_random_human_position()→ generate_circle_crossing_human()
         human_actions = self.get_human_actions()
+
+        #self.keep_rendering()
 
         # compute reward and episode info
         reward, done, episode_info = self.calc_reward(action)
@@ -1156,6 +1155,109 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         return ob, reward, done, info
 
+    def close(self):
+        if self.ownsPhysicsClient:
+            if self.physicsClientId >= 0:
+                self._p.disconnect()
+        self.physicsClientId = -1
+
+
+
+# --------------------------------------------------------------
+# !!! FUNCTIONS NOT BE USED IN CURRENT SETTING (csl_workspace)
+# --------------------------------------------------------------
+    def loadTex(self):
+        wallTexList = os.listdir(self.wallTexPath)
+        idx = np.arange(len(wallTexList))
+        self.np_random.shuffle(idx)
+
+        # load texture for walls
+        for i in range(self.config.pybullet.numTexture):
+            # key=fileName, val=textureID. If we have already loaded the texture, no need to reload and drain the memory
+            texID = self._p.loadTexture(os.path.join(self.wallTexPath, wallTexList[idx[i]]))
+            self.wallTextureList.append(texID)
+
+        # load texture for objects
+        objTextureList = os.listdir(self.objTexPath)
+        for i in range(len(objTextureList)):
+            texID = self._p.loadTexture(os.path.join(self.objTexPath, objTextureList[i]))
+            self.objTexDict[objTextureList[i]] = texID
+        self.objTexList = list(self.objTexDict.keys())
+
+    # randomly change the shape of pybullet obstacles, the number of changed obstacle = obs_num
+    # Can only be called in reset function!!!
+    # Note: please don't call it in the middle of an episode, outside of reset function! Otherwise, the new object may overlap with existing objects
+    def change_obs_shape_randomly(self, obs_num):
+        # determine the size of all new obs
+        obs_sizes = np.clip(np.random.normal(self.config.sim.obs_size_mean, self.config.sim.obs_size_std,
+                                                  size=(obs_num, 2)), a_min=self.config.sim.obs_min_size,
+                                 a_max=self.config.sim.obs_max_size)
+        for i in range(obs_num):
+            # randomly delete old obs
+            objID_delete = np.random.choice(self.all_obs_uids)
+            # delete pybullet object
+            self._p.removeBody(objID_delete)
+
+            # self.free_obs_uids, self.all_obs_uids (deepcopy of self.free_obs_uids), self.used_obs_uids
+            self.all_obs_uids.remove(objID_delete)
+
+            # self.obstacles
+            for j in range(len(self.obstacles)):
+                if self.obstacles[j, -1] == objID_delete:
+                    # print('deleted obj width, height:', self.obstacles[j, 2:4])
+                    # print('new obj width, height:', obs_sizes[i])
+                    self.obstacles = np.delete(self.obstacles, j, 0)
+                    break
+
+            # insert new obstacle
+            # generate pybullet object
+            objID_add = self.create_object(50, 50, radius=None, height=1,
+                                                         shape=p.GEOM_BOX,
+                                                         color=self.obs_color,
+                                                         # assume all objects' true heights are 1, will reset offset in z-axis later
+                                                         halfExtents=[obs_sizes[i, 0] / 2, obs_sizes[i, 1] / 2, 1])
+            # update self.free_obs_uids, self.all_obs_uids, self.used_obs_uids
+            self.all_obs_uids.append(objID_add)
+
+            # update self.obstacles (list of [lower left x, lower left y, width, height, uid])
+            # todo: didn't check collision with other objects!!!!!!
+            # subtract self.config.sim.obs_size_mean so that the obstacles are approximately centered in the arena
+            x, y = np.random.uniform(-self.arena_size - self.config.sim.obs_size_mean, self.arena_size - self.config.sim.obs_size_mean, size=2)
+            self.obstacles = np.vstack([self.obstacles, [[x, y, obs_sizes[i, 0], obs_sizes[i, 1], objID_add]]])
+            # print('all obj width, height:', self.obstacles[:, 2:4])
+
+    # remove a human with given index from the environment
+    # idx: the index of the human in self.humans
+    def remove_human(self, idx):
+        # recycle the pybullet cylinder
+        self._p.resetBasePositionAndOrientation(self.humans[idx].uid,
+                                                [20, 20, 0],
+                                                self._p.getQuaternionFromEuler([0, 0, 0]))
+        self.used_human_uids.remove(self.humans[idx].uid)
+        self.free_human_uids.append(self.humans[idx].uid)
+        # remove the Human instance
+        self.humans.pop(idx)
+        # update variables
+        self.human_num = self.human_num - 1
+        self.last_human_states = np.delete(self.last_human_states, idx, axis=0) # todo: check this
+        return
+
+    # remove a human with given index from the environment
+    def add_human(self):
+        # generate a new human instance, it will be appended to the end of self.humans list
+        self.generate_random_human_position(human_num=1)
+        self.humans[-1].id = self.human_num
+        # assign a cylinder to the new human
+        self.humans[-1].uid = self.free_human_uids.pop()
+        self.used_human_uids.append(self.humans[-1].uid)
+        self._p.resetBasePositionAndOrientation(self.humans[-1].uid,
+                                                [self.humans[-1].px, self.humans[-1].py, self.config.humans.height / 2],
+                                                self._p.getQuaternionFromEuler([0, 0, 0]))
+        # update variables
+        self.human_num = self.human_num + 1
+        self.last_human_states = np.concatenate((self.last_human_states, np.array([[15, 15, 0, 0, 0.3]])), axis=0)
+        return
+
     # randomly select a new goal in the next region on the human's route
     # returns: False if the human finds its next goal, True if the human completes the route and cannot find next goal
     def update_human_goal(self, human):
@@ -1199,40 +1301,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
             # for now, never removes a human in circle_crossing scenario
             return False
 
-
-
-    # remove a human with given index from the environment
-    # idx: the index of the human in self.humans
-    def remove_human(self, idx):
-        # recycle the pybullet cylinder
-        self._p.resetBasePositionAndOrientation(self.humans[idx].uid,
-                                                [20, 20, 0],
-                                                self._p.getQuaternionFromEuler([0, 0, 0]))
-        self.used_human_uids.remove(self.humans[idx].uid)
-        self.free_human_uids.append(self.humans[idx].uid)
-        # remove the Human instance
-        self.humans.pop(idx)
-        # update variables
-        self.human_num = self.human_num - 1
-        self.last_human_states = np.delete(self.last_human_states, idx, axis=0) # todo: check this
-        return
-
-    # remove a human with given index from the environment
-    def add_human(self):
-        # generate a new human instance, it will be appended to the end of self.humans list
-        self.generate_random_human_position(human_num=1)
-        self.humans[-1].id = self.human_num
-        # assign a cylinder to the new human
-        self.humans[-1].uid = self.free_human_uids.pop()
-        self.used_human_uids.append(self.humans[-1].uid)
-        self._p.resetBasePositionAndOrientation(self.humans[-1].uid,
-                                                [self.humans[-1].px, self.humans[-1].py, self.config.humans.height / 2],
-                                                self._p.getQuaternionFromEuler([0, 0, 0]))
-        # update variables
-        self.human_num = self.human_num + 1
-        self.last_human_states = np.concatenate((self.last_human_states, np.array([[15, 15, 0, 0, 0.3]])), axis=0)
-        return
-
     def change_human_num_periodically(self):
         if self.human_num_range > 0 and self.global_time % 5 == 0:
             # remove humans
@@ -1256,60 +1324,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
                         self.add_human()
 
         assert self.min_human_num <= self.human_num <= self.max_human_num
-
-    # use pybullet instead of geometry to check collision and find the closest distance
-    def collision_checker(self):
-        '''
-        check whether robot collides with other objects
-        returns:(collision, dmin)
-                collision: True if there is a collision, False if there's no collision
-                dmin: the distance between the robot and its closest human
-        '''
-        # collision detection
-        dmin = float('inf')
-
-        collision = False
-        collision_with = None
-        # check collision with humans
-        for i, human in enumerate(self.humans):
-            contact_points = p.getContactPoints(self.robot.uid, human.uid)
-            if contact_points:
-                collision = True
-                collision_with = 'human'
-                break
-            else:
-                closest_points = p.getClosestPoints(self.robot.uid, human.uid, distance=1000.0, linkIndexA=-1,
-                                                    linkIndexB=-1)
-                if closest_points:
-                    # The closest points are typically in closest_points[0], check its distance
-                    closest_dist = closest_points[0][8]
-                    if closest_dist < dmin:
-                        dmin = closest_dist
-
-        # check collision with obstacles
-        # if collision is already True, we don't overwrite or double count the collision with obstacles
-        if not collision and self.add_static_obs:
-            for i in range(self.obs_num):
-                if p.getContactPoints(self.robot.uid, int(self.cur_obstacles[i, -1])):
-                    collision = True
-                    collision_with = 'obstacle'
-
-        # check collision with walls
-        if not collision and self.config.sim.borders:
-            # -0.5: count for the thickness of wall
-            arena_size = self.arena_size + self.config.sim.human_pos_noise_range - 0.5
-            if self.robot.px + self.robot.radius > arena_size or self.robot.px - self.robot.radius < -arena_size or \
-                    self.robot.py + self.robot.radius > arena_size or self.robot.py - self.robot.radius < -arena_size:
-                collision = True
-                collision_with = 'wall'
-        return collision, dmin, collision_with
-
-    def close(self):
-        if self.ownsPhysicsClient:
-            if self.physicsClientId >= 0:
-                self._p.disconnect()
-        self.physicsClientId = -1
-
 
     def render(self, mode='human'):
         # no need to implement this function

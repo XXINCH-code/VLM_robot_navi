@@ -34,7 +34,7 @@ def main():
 	# otherwise: set to True
 	parser.add_argument('--cpu', default=False, action='store_true')
 	# model weight file you want to test
-	parser.add_argument('--test_model', type=str, default='64000.pt')
+	parser.add_argument('--test_model', type=str, default='105800.pt')
 	#parser.add_argument('--test_model', type=str, default='208200.pt')
 	#parser.add_argument('--test_model', type=str, default='137400.pt')
 

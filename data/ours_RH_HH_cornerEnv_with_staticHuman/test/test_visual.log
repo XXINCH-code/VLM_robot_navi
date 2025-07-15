@@ -1,16 +1,16 @@
-2025-07-14 16:24:41, INFO: robot FOV 2.000000
-2025-07-14 16:24:41, INFO: humans FOV 2.000000
-2025-07-14 16:24:41, INFO: Create other envs with new settings
-2025-07-14 16:24:41, INFO: Not randomize human's radius and preferred speed
-2025-07-14 16:24:41, INFO: Circle width: 4
-2025-07-14 16:24:41, INFO: robot FOV 6.283185
-2025-07-14 16:24:41, INFO: humans FOV 6.283185
-2025-07-14 16:31:43, INFO: TEST  has success rate: 0.40, collision rate: 0.40, timeout rate: 0.20, nav time: 40.20
-2025-07-14 16:31:43, INFO: collision rate with humans: 0.20, with obstacles: 0.20, with walls: 0.00, 
-2025-07-14 16:31:43, INFO: average intrusion ratio: 0.29 and average minimal distance during intrusions: 0.00
-2025-07-14 16:31:43, INFO: TEST  has average path length: 23.20
-2025-07-14 16:31:43, INFO: Collision cases: 2 3
-2025-07-14 16:31:43, INFO: Collision with Human cases: 3
-2025-07-14 16:31:43, INFO: Collision with Obstacle cases: 2
-2025-07-14 16:31:43, INFO: Collision with Wall cases: 
-2025-07-14 16:31:43, INFO: Timeout cases: 4
+2025-07-15 16:31:16, INFO: robot FOV 2.000000
+2025-07-15 16:31:16, INFO: humans FOV 2.000000
+2025-07-15 16:31:16, INFO: Create other envs with new settings
+2025-07-15 16:31:16, INFO: Not randomize human's radius and preferred speed
+2025-07-15 16:31:16, INFO: Circle width: 4
+2025-07-15 16:31:16, INFO: robot FOV 6.283185
+2025-07-15 16:31:16, INFO: humans FOV 6.283185
+2025-07-15 16:37:36, INFO: TEST  has success rate: 1.00, collision rate: 0.00, timeout rate: 0.00, nav time: 32.18
+2025-07-15 16:37:36, INFO: collision rate with humans: 0.00, with obstacles: 0.00, with walls: 0.00, 
+2025-07-15 16:37:36, INFO: average intrusion ratio: 0.87 and average minimal distance during intrusions: 0.00
+2025-07-15 16:37:36, INFO: TEST  has average path length: 23.78
+2025-07-15 16:37:36, INFO: Collision cases: 
+2025-07-15 16:37:36, INFO: Collision with Human cases: 
+2025-07-15 16:37:36, INFO: Collision with Obstacle cases: 
+2025-07-15 16:37:36, INFO: Collision with Wall cases: 
+2025-07-15 16:37:36, INFO: Timeout cases: 

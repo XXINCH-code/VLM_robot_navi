@@ -261,24 +261,6 @@ class CrowdSim(gym.Env):
             self.generate_human_activities(human)
             if human is not None:
                 self.humans.append(human)
-        ''' 
-        for i in range(static_human_num):
-            idx = np.random.choice(len(self.config.human_flow.static_regions))
-            static_human = self.generate_circle_crossing_human(region_idx=idx, static=True)
-            #static_human = self.generate_circle_crossing_human(static=True)
-            static_human.isObstacle = True
-            self.generate_human_activities(static_human)
-            self.humans.append(static_human)
-            
-            if static_human.activity == 'talking':  # idx=1 is the small region
-                new_idx = idx
-                new_static_human = self.generate_circle_crossing_human(region_idx=new_idx, static=True)
-                new_static_human.isObstacle = True
-                new_static_human.activity = 'talking'  
-                new_static_human.v_max = 0.0  
-                self.humans.append(new_static_human)
-                self.static_human_num += 1
-        '''
         
         used_regions = set()
         region_num = len(self.config.human_flow.static_regions)
@@ -349,36 +331,6 @@ class CrowdSim(gym.Env):
         # px, py, gx, gy, vx, vy, theta
         human.set(px, py, px, py, 0, 0, 0, v_pref=0)
         return human
-
-    '''
-    # generate and return a moving human
-    def generate_circle_crossing_human(self, static=False):
-        human = Human(self.config, 'humans')
-        if self.randomize_attributes:
-            human.sample_random_attributes()
-
-        while True:
-            angle = np.random.random() * np.pi * 2
-            # add some noise to simulate all the possible cases robot could meet with human
-            v_pref = 1.0 if human.v_pref == 0 else human.v_pref
-            px_noise = (np.random.random() - 0.5) * v_pref
-            py_noise = (np.random.random() - 0.5) * v_pref
-            px = self.circle_radius * np.cos(angle) + px_noise
-            py = self.circle_radius * np.sin(angle) + py_noise
-            gx = -px
-            gy = -py
-
-            if self.group_human:
-                collide = self.check_collision_group((px, py), human.radius)
-            else:
-                collide = self.check_collision((px, py), human.radius)
-            if not collide:
-                break
-
-        human.set(px, py, gx, gy, 0, 0, 0)
-
-        return human
-    '''
 
 
     # add noise according to env.config to observation
@@ -968,6 +920,7 @@ class CrowdSim(gym.Env):
 
         return (inFov and inSensorRange)
 
+    '''
     # for robot:
     # return only visible humans to robot and number of visible humans and visible humans' ids (0 to 4)
     def get_num_human_in_fov(self):
@@ -985,7 +938,7 @@ class CrowdSim(gym.Env):
                 human_ids.append(False)
 
         return humans_in_view, num_humans_in_view, human_ids
-
+    '''
 
     # convert an np array with length = 34 to a JointState object
     def array_to_jointstate(self, obs_list):
