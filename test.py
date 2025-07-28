@@ -18,9 +18,9 @@ def main():
 	# the following parameters will be determined for each test run
 	parser = argparse.ArgumentParser('Parse configuration file')
 	# the model directory that we are testing
-	parser.add_argument('--model_dir', type=str, default='data/ours_RH_HH_cornerEnv_with_staticHuman')
+	parser.add_argument('--model_dir', type=str, default='data/ours_RH_HH_cornerEnv')
+	#parser.add_argument('--model_dir', type=str, default='data/ours_RH_HH_cornerEnv_with_staticHuman')
 	#parser.add_argument('--model_dir', type=str, default='trained_models/ours_RH_HH_hallwayEnv')
-	#parser.add_argument('--model_dir', type=str, default='trained_models/ours_RH_HH_loungeEnv_resumeFromRand')
 
 	# We recommend setting visualize to False
 	# because setting it to True will result in asynchronous robot and human simulation, and INCORRECT testing results
@@ -34,7 +34,7 @@ def main():
 	# otherwise: set to True
 	parser.add_argument('--cpu', default=False, action='store_true')
 	# model weight file you want to test
-	parser.add_argument('--test_model', type=str, default='105800.pt')
+	parser.add_argument('--test_model', type=str, default='35200.pt')
 	#parser.add_argument('--test_model', type=str, default='208200.pt')
 	#parser.add_argument('--test_model', type=str, default='137400.pt')
 
@@ -58,7 +58,7 @@ def main():
 		Config = getattr(model_arguments, 'Config')
 	except:
 		print('Failed to get Config function from ', test_args.model_dir, '/config.py')
-		from crowd_nav.configs.config import Config
+		from crowd_nav.configs.config_randEnv import Config
 
 
 	config = Config()

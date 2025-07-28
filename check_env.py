@@ -9,8 +9,10 @@ from crowd_sim.envs import *
 if __name__ == '__main__':
     display = True
 
-    from crowd_nav.configs.config import Config
-    from trained_models.ours_RH_HH_hallwayEnv.configs.config import Config as Config2
+    #from crowd_nav.configs.config import Config
+    from crowd_nav.configs.config_randEnv import Config
+    #from trained_models.ours_RH_HH_hallwayEnv.configs.config import Config as Config_randEnv
+    #config = Config()
     config = Config()
 
     # Enable rendering if display mode is active and 'sim' attribute exists in config
@@ -39,7 +41,7 @@ if __name__ == '__main__':
     obs = env.reset()  # Initialize environment and get initial observation
 
     done = False       # Track if an episode has ended
-    
+
     '''
     for i in range(2000):
         action = np.random.choice(8)                # Select random action
@@ -56,8 +58,10 @@ if __name__ == '__main__':
     from time import time
     t0 = time()
     for _ in range(1000):
-        obs,_,done,_ = env.step(env.action_space.sample())
+        obs,_,done,info = env.step(env.action_space.sample())
         if done:
+            print(str(info))
+            env.clear_all_activity_texts()
             env.reset()
     print('平均每 step 用时', (time()-t0)/1000)
     
