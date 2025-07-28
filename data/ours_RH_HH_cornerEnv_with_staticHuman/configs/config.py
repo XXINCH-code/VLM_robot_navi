@@ -34,10 +34,18 @@ class Config(object):
     # circle_crossing: circle crossing humans, random robot init & goal poses, random obstacles
     # csl_workspace: human flow in a set of regions, robot init & goal poses in a set of regions, fixed obstacles
     env.scenario = 'csl_workspace'
-    # if env.scenario == 'csl_workspace', the environment is 
-    env.csl_workspace_type = 'corner'  # hallway, lounge, corner, corridor
     # sim or sim2real
     env.mode = 'sim2real'
+
+    # whether to use VLM for navigation, if "real", the robot will detect env and human activity by vlm
+    env.use_vlm = False  # False means sim; True means real
+    env.use_activity_weight = True  # whether to use human activity weight in attention mechanism
+    env.human_activity_beta = 2  # beta value for human activity weight, used in attention mechanism
+    if env.use_vlm:
+        env.csl_workspace_type = np.random.choice(['corner', 'corridor'])
+    else:
+        # if env.scenario == 'csl_workspace', the environment is 
+        env.csl_workspace_type = 'corner' # hallway, lounge, corner, corridor
 
     # robot action type
     action_space = BaseConfig()
@@ -69,8 +77,12 @@ class Config(object):
     reward.success_reward = 20
     reward.collision_penalty = -20
     # discomfort distance
-    reward.discomfort_dist = 0.25
+    reward.discomfort_dist = 0.3
     reward.discomfort_penalty_factor = 10
+    # dynamic navigation reward (diff envs)
+    reward.keep_right_coeff = 0.5
+    reward.corner_speed_penalty = 0.5  # penalty for robot speed in corner
+
     # reduce the potential reward for hierarchical policy with A*
     if 'Hie' in env.env_name:
         reward.potential_reward_factor = 1
@@ -744,7 +756,7 @@ class Config(object):
 
     # a human may have diffrferent activities
     humans.dynamic_activity = ['walking', 'carrying']
-    humans.static_activity = ['stationary', 'talking']
+    humans.static_activity = ['static', 'talking']
 
     # add noise to observation or not
     noise = BaseConfig()
@@ -879,7 +891,7 @@ class Config(object):
     training.resume = 'rl'
     # if resume != 'none', load from the following checkpoint
     #training.load_path = 'trained_models/ours_HH_RH_randEnv/checkpoints/237800.pt'
-    training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/105800.pt'
+    training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/134200.pt'
     #training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/18000.pt'
     training.overwrite = True  # whether to overwrite the output directory in training
     training.num_threads = 1  # number of threads used for intraop parallelism on CPU

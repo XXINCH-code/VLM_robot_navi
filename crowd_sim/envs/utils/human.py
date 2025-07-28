@@ -19,6 +19,8 @@ class Human(Agent):
         # activity of this human, e.g. walking, running, standing
         self.activity = None
         self.v_max = 0
+        self.priority_coef = 1
+        self.discomfort_dist = config.reward.discomfort_dist
 
     def act(self, ob):
         """

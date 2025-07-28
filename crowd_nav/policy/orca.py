@@ -87,8 +87,13 @@ class ORCA(Policy):
             self.sim = None
         if self.sim is None:
             self.sim = rvo2.PyRVOSimulator(self.time_step, *params, self.radius, self.max_speed)
+            '''
             self.sim.addAgent((self_state.px, self_state.py), *params, self_state.radius + 0.01 + self.safety_space,
                               self_state.v_pref, (self_state.vx, self_state.vy))
+            '''
+            self.sim.addAgent((self_state.px, self_state.py), *params, self_state.radius + 0.01 + self.safety_space,
+                              self.max_speed, (self_state.vx, self_state.vy))
+            
             for human_state in state.human_states:
                 self.sim.addAgent((human_state.px, human_state.py), *params,
                                   human_state.radius + 0.01 + self.config.orca.safety_space,
