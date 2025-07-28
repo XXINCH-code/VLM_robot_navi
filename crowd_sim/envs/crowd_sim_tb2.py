@@ -7,6 +7,9 @@ from collections import defaultdict
 from PIL import Image, ImageFilter
 import imageio
 import io
+import json
+from PIL import ImageDraw, ImageFont
+from crowd_nav.configs.config_randEnv import Config
 
 import pybullet as p
 from pybullet_utils import bullet_client
@@ -765,6 +768,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         '''
         # collision detection
         dmin = float('inf')
+        close_humans = []
 
         collision = False
         collision_with = None
@@ -783,6 +787,8 @@ class CrowdSim3DTB(CrowdSimVarNum):
                     closest_dist = closest_points[0][8]
                     if closest_dist < dmin:
                         dmin = closest_dist
+                    if closest_dist < human.discomfort_dist:
+                        close_humans.append((human, closest_dist))
 
         # check collision with obstacles
         # if collision is already True, we don't overwrite or double count the collision with obstacles
@@ -800,9 +806,13 @@ class CrowdSim3DTB(CrowdSimVarNum):
                     self.robot.py + self.robot.radius > arena_size or self.robot.py - self.robot.radius < -arena_size:
                 collision = True
                 collision_with = 'wall'
-        return collision, dmin, collision_with
+        return collision, dmin, collision_with, close_humans
 
     def reset(self, phase='train', test_case=None):
+        # reset the environment, random experimental envs
+        config = Config()
+        self.configure(config)
+
         # create robot, humans, and obstacles
         self.create_scenario(phase=phase, test_case=test_case)
         self.create_goal_object()
@@ -891,15 +901,81 @@ class CrowdSim3DTB(CrowdSimVarNum):
             physicsClientId=self.physicsClientId,
         )
 
-        return width, height, rgbImg, depthImg, segImg       
+        # only keep (r, g, b), remove alpha
+        rgb_array = np.reshape(rgbImg, (self.height, self.width, 4)).astype(np.uint8)[..., :3]
+        rgbim = Image.fromarray(rgb_array)
+        self.show_label(rgbim, view_matrix, projection_matrix)
 
+        return rgbim, depthImg, segImg       
+
+    def get_camera_image_with_labels(self):
+        """
+        获取机器人相机图像，并在图像上添加每个人的 activity label（使用 PIL）
+        """
+        # 相机位姿（与 get_camera_image() 一样）
+        basePos, baseOrientation = p.getBasePositionAndOrientation(self.robot.uid)
+        basePos = np.array(basePos)
+        matrix = p.getMatrixFromQuaternion(baseOrientation)
+        tx_vec = np.array([matrix[0], matrix[3], matrix[6]])
+        tz_vec = np.array([matrix[2], matrix[5], matrix[8]])
+
+        camera_position = basePos + self.robot.radius * tx_vec + 0.5 * self.camera_height * tz_vec
+        camera_target = camera_position + 1 * tx_vec
+        camera_up = tz_vec
+
+        view_matrix = p.computeViewMatrix(
+            cameraEyePosition=camera_position,
+            cameraTargetPosition=camera_target,
+            cameraUpVector=camera_up,
+            physicsClientId=self.physicsClientId
+        )
+        projection_matrix = p.computeProjectionMatrixFOV(
+            fov=self.camera_fov,
+            aspect=self.aspect_ratio,
+            nearVal=self.near_plane,
+            farVal=self.far_plane,
+            physicsClientId=self.physicsClientId
+        )
+
+        width, height, rgba, depth, seg = p.getCameraImage(
+            width=self.width,
+            height=self.height,
+            viewMatrix=view_matrix,
+            projectionMatrix=projection_matrix,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,  # 强制使用 PyBullet 内部渲染器
+            physicsClientId=self.physicsClientId
+        )
+        rgba = np.reshape(rgba, (height, width, 4)).astype(np.uint8)
+        rgb = rgba[..., :3]
+        rgbim = Image.fromarray(rgb)
+
+        # 显示 label
+        pts3d = np.array([[h.px, h.py, self.config.humans.height + 0.1] for h in self.humans])
+        pix_coords = self.project_points(
+            pts3d, view_matrix, projection_matrix,
+            img_w=self.width, img_h=self.height
+        )
+
+        draw = ImageDraw.Draw(rgbim)
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", size=20)
+
+        for (x_pix, y_pix), human in zip(pix_coords, self.humans):
+            if human.activity:
+                draw.text((x_pix, y_pix), str(human.activity), fill=(255, 0, 0), font=font)
+
+        return rgbim, depth, seg
+
+    
     def keep_rendering(self):
         """
         Continuously render the environment, including the robot, humans, and their activities.
         """
-        self.get_camera_image()
         self.render_human_activity()
-        self.render_lidar_pc()
+        # keep rendering the camera image with labels，and save it
+        rgbim, _, _ = self.get_camera_image_with_labels()
+        rgbim.save("debug_image_with_labels.png")
+        #self.get_camera_image()
+        #self.render_lidar_pc()
 
 
 
@@ -922,6 +998,48 @@ class CrowdSim3DTB(CrowdSimVarNum):
         left_noise, right_noise = np.random.normal(0, 0.15, size=2)
         return new_left + left_noise, new_right + right_noise
     
+    @staticmethod
+    def project_points(pts3d, view_matrix, projection_matrix, img_w, img_h):
+        """
+        pts3d: (N,3) world coords
+        view_matrix, proj_matrix: 从 PyBullet 得到的 list of 16 floats, row-major.
+        返回: (N,2) 图像坐标 (pixel_x, pixel_y)
+        """
+        # 转为 4x4 矩阵
+        V = np.array(view_matrix, dtype=np.float32).reshape((4,4), order='F')
+        P = np.array(projection_matrix, dtype=np.float32).reshape((4,4), order='F')
+
+        pts = np.concatenate([pts3d, np.ones((len(pts3d),1),dtype=np.float32)], axis=1)  # (N,4)
+        clip = pts @ V.T @ P.T           # (N,4)
+        ndc = clip[:, :3] / clip[:, 3:4] # 归一化设备坐标 (N,3) in [-1..1]
+
+        # 像素坐标
+        x_pix = ( ndc[:,0] + 1 ) * 0.5 * img_w
+        y_pix = ( 1 - (ndc[:,1] + 1)*0.5 ) * img_h
+        return np.stack([x_pix, y_pix], axis=1)
+
+    def show_label(self, rgbim, view_matrix, projection_matrix):
+        # 1) 准备要投影的“人头”3D点
+        pts3d = np.array([[h.px, h.py, self.config.humans.height + 0.5] 
+                        for h in self.humans])
+
+        # 2) 把当前用的 view/proj 矩阵传进去，算出像素
+        pix_coords = self.project_points(
+            pts3d=pts3d, 
+            view_matrix=view_matrix, 
+            projection_matrix=projection_matrix,
+            img_w=self.render_img_w, 
+            img_h=self.render_img_h)
+
+        # 3) 用 PIL 画文字
+        draw = ImageDraw.Draw(rgbim)
+        font = ImageFont.load_default()  # 或者加载更大一点的 ttf
+
+        for (x_pix, y_pix), human in zip(pix_coords, self.humans):
+            if human.activity:
+                txt = str(human.activity)
+                draw.text((x_pix, y_pix), txt, fill=(255,0,0), font=font)
+
     def render_scene(self):
         """
         Read rgbd image from camera, save them in self.rgb_img & self.depth_img
@@ -956,6 +1074,9 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         # for save_slides use
         rgbim = Image.fromarray(self.rgb_img)
+
+        self.show_label(rgbim, view_matrix, projection_matrix)
+
         rgbim = rgbim.crop((250/900*self.render_img_w, 200/900*self.render_img_h, 600/900*self.render_img_w, 600/900*self.render_img_h))
         rgbim = rgbim.resize((self.render_img_w, self.render_img_h), Image.LANCZOS)
         rgbim = rgbim.filter(ImageFilter.SHARPEN)
@@ -985,7 +1106,8 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # reset()→ generate_robot_humans()→ generate_random_human_position()→ generate_circle_crossing_human()
         human_actions = self.get_human_actions()
 
-        #self.keep_rendering()
+        # !!! close it before training, otherwise it will cause delay
+        self.keep_rendering()
 
         # compute reward and episode info
         reward, done, episode_info = self.calc_reward(action)
@@ -1008,8 +1130,8 @@ class CrowdSim3DTB(CrowdSimVarNum):
         left, right = self.tb2_dynamics(left, right)
 
         # todo: what should be the value of force (maximum motor force)?
-        p.setJointMotorControl2(self.robot.uid, 0, p.VELOCITY_CONTROL, targetVelocity=left, force=10)
-        p.setJointMotorControl2(self.robot.uid, 1, p.VELOCITY_CONTROL, targetVelocity=right, force=10)
+        #p.setJointMotorControl2(self.robot.uid, 0, p.VELOCITY_CONTROL, targetVelocity=left, force=10)
+        #p.setJointMotorControl2(self.robot.uid, 1, p.VELOCITY_CONTROL, targetVelocity=right, force=10)
 
         # get the new robot state from PyBullet, then set it to the robot instance (to keep consistency with the rest of repo)
         [robot_px, robot_py, _], quaternion_angle = p.getBasePositionAndOrientation(self.robot.uid)
@@ -1018,8 +1140,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         # print('robot vx:', robot_vx, 'robot vy:', robot_vy)
         # print('time', self.global_time, 'actual vx:', (robot_px - self.rob_prev_px)/self.time_step, 'vy:', (robot_py - self.rob_prev_py)/self.time_step)
-        # self.rob_prev_px = robot_px
-        # self.rob_prev_py = robot_py
         self.robot.set(robot_px, robot_py, self.robot.gx, self.robot.gy, robot_vx, robot_vy, robot_yaw)
         self.robot.w = robot_wz
         # self.robot.v = 0.035 / 2 * (left + right) # 0.035 is the wheel radius

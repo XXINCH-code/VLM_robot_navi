@@ -87,7 +87,8 @@ class CrowdSimVarNum(CrowdSim):
         return np.sum(valid_intersections)
 
     def generate_robot(self):
-        theta = np.random.uniform(self.config.robot.initTheta_range[0], self.config.robot.initTheta_range[1])
+        #theta = np.random.uniform(self.config.robot.initTheta_range[0], self.config.robot.initTheta_range[1])
+        theta = np.pi / 2
         num_obs_intersects = 4
         trial = 0
         while True:
@@ -140,9 +141,11 @@ class CrowdSimVarNum(CrowdSim):
         # print('begin generate robot')
         # generate the robot
         self.generate_robot()
-        # print('done generate robot')
-        # generate humans
+        
+        # 因为现在每次训练先随机env，因此也需要完全随机human routine的选取
+        np.random.seed()
 
+        # generate humans
         # if the routes of all humans are correlated, chosen the routes for all of them here
         if self.config.env.scenario == 'csl_workspace' and self.config.human_flow.route_type == 'correlated':
             route_idx = np.random.choice(len(self.config.human_flow.correlated_routes))
@@ -400,11 +403,26 @@ class CrowdSimVarNum(CrowdSim):
         # print(reward)
         return reward
 
+    def get_priority_vlm(self):
+        '''
+        _, _, rgb, _, _ = self.get_camera_image()
+        
+        scene_type, activities = self.infer_scene_activity(np.asarray(rgb, dtype=np.uint8))
+        self.scene_prior = scene_type 
+        self.activities_vlm = {h.id: act for h, act in zip(visible_humans, activities)}
+        for h in visible_humans:                             # 给每个人挂属性
+            h.activity = self.activities_vlm.get(h.id, None)
+            self.set_activity_priorities(h)
+        '''
+        scene_prior = self.config.env.csl_workspace_type
+
+        return scene_prior
+
     # find R(s, a), done or not, and episode information
     def calc_reward(self, action, danger_zone='circle'):
 
         # collision checking
-        collision, dmin, collision_with = self.collision_checker()
+        collision, dmin, collision_with, close_humans = self.collision_checker()
 
         # check if reaching the goal
         reaching_goal = norm(
@@ -451,8 +469,24 @@ class CrowdSimVarNum(CrowdSim):
             # only penalize agent for getting too close if it's visible
             # adjust the reward based on FPS
             # print(dmin)
-            reward = (dmin - self.discomfort_dist) * self.discomfort_penalty_factor * self.time_step
             done = False
+            diffs = []
+            reward = 0
+            dmin = float('inf')
+            dmin_diff = 0
+            # add specific discomfort penalty for each close human
+            for human, dist in close_humans:
+                margin = human.discomfort_dist * human.priority_coef
+                diff = dist - margin
+                diffs.append(diff)
+                #reward += diff * (0.05 * self.discomfort_penalty_factor) * self.time_step
+                if dist < dmin:
+                    dmin = dist
+                    dmin_diff = diff
+            if dmin < float('inf'):
+                reward += dmin_diff * self.discomfort_penalty_factor * self.time_step
+                reward = min(0, reward)
+            min_danger_dist = min([dist for _, dist in close_humans])
             episode_info = Danger(min_danger_dist)
 
         else:
@@ -460,6 +494,18 @@ class CrowdSimVarNum(CrowdSim):
 
             done = False
             episode_info = Nothing()
+
+        scene_idx = self.get_priority_vlm()
+        if scene_idx == 'simple_corridor':  # corridor
+            # 鼓励靠右行驶：机器人 y 越偏右（y 越负），reward 越高
+            x = self.robot.px
+            reward += self.config.reward.keep_right_coeff * (x) * self.time_step
+
+        elif scene_idx == 'simple_corner':  # cornerv
+            # 拐角前放慢速度：速度越大，越惩罚
+            speed = np.linalg.norm(self.robot.v)
+            # 0.2 is the proper speed to cross the corner
+            reward += self.config.reward.corner_speed_penalty * (0.2-speed) * self.time_step
 
         # if the robot is near collision/arrival, it should be able to turn a large angle
         if self.robot.kinematics in ['unicycle', 'turtlebot']:
