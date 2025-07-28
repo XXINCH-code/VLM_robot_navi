@@ -141,6 +141,8 @@ class EdgeAttention_M(nn.Module):
 
         # Store required sizes
         self.human_embedding_size = config.SRNN.human_embedding_size
+        # beta value for human activity weight, used in attention mechanism
+        self.activity_beta = config.env.human_activity_beta  
 
         self.num_attention_head = config.SRNN.hr_attn_head_num
         self.attention_size = config.SRNN.hr_attention_size
@@ -170,10 +172,21 @@ class EdgeAttention_M(nn.Module):
         mask = mask[:, :-1].unsqueeze(-2)  # seq_len*nenv, 1, max_human_num
         return mask
 
-    def att_func(self, temporal_embed, spatial_embed, h_spatials, attn_mask=None):
+    def att_func(self, temporal_embed, spatial_embed, h_spatials, attn_mask=None, activity_prior=None):
         seq_len, nenv, num_edges, h_size = h_spatials.size()  # [1, 12, 30, 256] in testing,  [12, 30, 256] in training
         attn = temporal_embed * spatial_embed
         attn = torch.sum(attn, dim=3)
+
+        #print("h_spatials:", h_spatials.shape)
+        #print("temporal_embed:", temporal_embed.shape)
+        #print("spatial_embed:", spatial_embed.shape)
+
+        # impact of human activity priority
+        if self.config.env.use_activity_weight and self.config.env.use_vlm:
+            activity_weight = activity_prior.squeeze(-1)  # static / talking / walking / running
+            #print("activity_weight:", activity_weight.shape)
+            #print("attn:", attn.shape)
+            attn = attn + self.activity_beta * (activity_weight - 1.0)  
 
         # Variable length
         temperature = num_edges / np.sqrt(self.attention_size)
@@ -203,7 +216,7 @@ class EdgeAttention_M(nn.Module):
 
     # h_temporal: [seq_len, nenv, 1, 256]
     # h_spatials: [seq_len, nenv, 5, 256]
-    def forward(self, h_temporal, h_spatials, each_seq_len):
+    def forward(self, h_temporal, h_spatials, each_seq_len, activity_prior=None):
         '''
         Forward pass for the model
         params:
@@ -229,7 +242,7 @@ class EdgeAttention_M(nn.Module):
 
             attn_mask = self.create_attn_mask(each_seq_len, seq_len, nenv, max_human_num)  # [seq_len*nenv, 1, max_human_num]
             attn_mask = attn_mask.squeeze(-2).view(seq_len, nenv, max_human_num)
-            weighted_value,attn=self.att_func(temporal_embed, spatial_embed, h_spatials, attn_mask=attn_mask)
+            weighted_value,attn=self.att_func(temporal_embed, spatial_embed, h_spatials, attn_mask=attn_mask, activity_prior=activity_prior)
             weighted_value_list.append(weighted_value)
             attn_list.append(attn)
 
@@ -323,7 +336,7 @@ class selfAttn_merge_SRNN(nn.Module):
         robot_size = obs_space_dict['robot_node'].shape[1]
 
         self.robot_linear = nn.Sequential(self.init_(nn.Linear(robot_size, config.SRNN.robot_embedding_size)), nn.ReLU())
-        # self.human_node_final_linear=self.init_(nn.Linear(self.output_size,2))
+        self.scene_linear = nn.Sequential(self.init_(nn.Linear(3, config.SRNN.robot_embedding_size)), nn.ReLU())
 
         if self.config.SRNN.use_self_attn:
             self.spatial_attn = SpatialEdgeSelfAttn(config)
@@ -351,6 +364,15 @@ class selfAttn_merge_SRNN(nn.Module):
         robot_states = reshapeT(inputs['robot_node'], seq_length, nenv)
         spatial_edges = reshapeT(inputs['spatial_edges'], seq_length, nenv)
         detected_human_num = inputs['detected_human_num'].squeeze(-1).cpu().int()
+        scene_prior  = reshapeT(inputs['scene_prior'],  seq_length, nenv)      # shape: [seq, nenv, 1, 3]              # [seq, nenv, embed]
+
+        if self.config.env.use_vlm:
+            # inputs['activity_prior'] 原[seq_len*nenv, human_num, 1]；现[seq_len, nenv, human_num, 1]
+            activity_prior = reshapeT(inputs['activity_prior'], seq_length, nenv)
+        else:
+            activity_prior = None
+
+        scene_embed  = self.scene_linear(scene_prior.squeeze(2)) 
 
         # based on old storage.py, compatible with crowdnav1
         # hidden_states_node_RNNs = reshapeT(rnn_hxs['human_node_rnn'], 1, nenv)
@@ -358,15 +380,8 @@ class selfAttn_merge_SRNN(nn.Module):
 
         masks = reshapeT(masks, seq_length, nenv)
 
-        # based on old storage.py, compatible with crowdnav1
-        # if not self.config.training.cuda:
-        #     all_hidden_states_edge_RNNs = Variable(
-        #         torch.zeros(1, nenv, 1+self.human_num, rnn_hxs['human_human_edge_rnn'].size()[-1]).cpu())
-        # else:
-        #     all_hidden_states_edge_RNNs = Variable(
-        #         torch.zeros(1, nenv, 1+self.human_num, rnn_hxs['human_human_edge_rnn'].size()[-1]).cuda())
-
         robot_states = self.robot_linear(robot_states)
+        robot_states = robot_states + scene_embed.unsqueeze(2)
 
         # Spatial Edges
         # self attention
@@ -377,7 +392,9 @@ class selfAttn_merge_SRNN(nn.Module):
         output_spatial = self.spatial_linear(spatial_attn_out)
 
         # robot-human attention
-        if self.config.SRNN.use_hr_attn:
+        if self.config.SRNN.use_hr_attn and self.config.env.use_vlm:
+            hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, detected_human_num, activity_prior)
+        elif self.config.SRNN.use_hr_attn:
             hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, detected_human_num)
         else:
             # if we don't add robot-human attention, just take average of all human embeddings

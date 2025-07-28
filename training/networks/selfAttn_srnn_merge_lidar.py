@@ -65,12 +65,22 @@ class selfAttn_merge_SRNN_lidar(selfAttn_merge_SRNN):
         # [seq len, batch size, 2, pc num] -> [seq_len*batch_size,2, pc num]
         lidar_in = inputs['point_clouds'].reshape(seq_length * nenv, self.lidar_channel_num, self.lidar_input_size)
 
+        if self.config.env.use_vlm:
+            # inputs['activity_prior'] 原[seq_len*nenv, human_num, 1]；现[seq_len, nenv, human_num, 1]
+            activity_prior = reshapeT(inputs['activity_prior'], seq_length, nenv)
+        else:
+            activity_prior = None
+
+        scene_prior  = reshapeT(inputs['scene_prior'],  seq_length, nenv)
+        scene_embed  = self.scene_linear(scene_prior.squeeze(2)) 
+
         hidden_states_node_RNNs = reshapeT(rnn_hxs['rnn'], 1, nenv)
 
         masks = reshapeT(masks, seq_length, nenv)
 
         # embed robot states
         robot_states = self.robot_linear(robot_states)
+        robot_states = robot_states + scene_embed.unsqueeze(2)
 
         # embed lidar pc
         lidar_features = self.lidar_embed(lidar_in)
@@ -86,9 +96,11 @@ class selfAttn_merge_SRNN_lidar(selfAttn_merge_SRNN):
             spatial_attn_out = spatial_edges
         # [seq len, nenv, human num, 64] (64 is human_embedding_size)
         output_spatial = self.spatial_linear(spatial_attn_out)  # (seq len, nenv, human num, 64)
-
+        
         # robot-human attention
-        if self.config.SRNN.use_hr_attn:
+        if self.config.SRNN.use_hr_attn and self.config.env.use_vlm:
+            hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, detected_human_num, activity_prior)
+        elif self.config.SRNN.use_hr_attn:
             hidden_attn_weighted, _ = self.attn(robot_states, output_spatial, detected_human_num)
         else:
             # take sum of all human embeddings (without being weighted by RH attention scores)
