@@ -220,33 +220,38 @@ class CrowdSim(gym.Env):
         """
         if human.isObstacle:
             human.activity = random.choice(self.config.humans.static_activity)
-            if human.activity == 'stationary':
+            if human.activity == 'static':
                 human.v_max = 0.0  
             elif human.activity == 'talking':
                 human.v_max = 0.0  
         else:
             human.activity = random.choice(self.config.humans.dynamic_activity)
             if human.activity == 'walking':
-                human.v_max = 0.5  
-            #elif human.activity == 'running':
-            #    human.v_max = 1  
+                human.v_max = 1
             elif human.activity == 'carrying':
-                human.v_max = 0.1  
-        
-        # Adjust discomfort based on activity
-        if human.activity == 'walking':
-            self.discomfort_dist = 0.25  # Example: Increase discomfort distance when walking
-            self.discomfort_penalty_factor = 10  # Example: Default penalty for walking
-        elif human.activity == 'carrying':
-            self.discomfort_dist = 0.4  # Example: Increase discomfort distance when carrying
-            self.discomfort_penalty_factor = 15  # Example: Higher penalty for carrying
-        elif human.activity == 'stationary':
-            self.discomfort_dist = 0.15  # Decrease discomfort distance when stationary
-            self.discomfort_penalty_factor = 5  # Lower penalty for stationary activity
-        elif human.activity == 'talking':
-            self.discomfort_dist = 0.3  # Medium discomfort distance for talking
-            self.discomfort_penalty_factor = 8  # Medium penalty for talking
-
+                human.v_max = 0.5
+        self.set_activity_priorities(human)
+    
+    
+    def set_activity_priorities(self, human):
+        """
+        Set activity priorities for a human.
+        """
+        if self.config.env.use_activity_weight:
+            # Adjust discomfort distance based on activity
+            if human.activity == 'static':
+                human.discomfort_dist = 0.3
+                human.priority_coef = 0.8
+            elif human.activity == 'talking':
+                human.discomfort_dist = 0.4
+                human.priority_coef = 1.5
+            elif human.activity == 'walking':
+                human.discomfort_dist = 0.4
+                human.priority_coef = 1.0
+            elif human.activity == 'carrying':
+                human.discomfort_dist = 0.5
+                human.priority_coef = 1.25
+    
     # add all generated humans to the self.humans list
     def generate_random_human_position(self, human_num, static_human_num=0):
         """
@@ -258,6 +263,11 @@ class CrowdSim(gym.Env):
         # initial min separation distance to avoid danger penalty at beginning
         for i in range(human_num):
             human = self.generate_circle_crossing_human()
+            
+            if self.config.env.use_vlm:
+                self.generate_human_activities(human)
+            else: self.generate_human_activities(human)
+            
             self.generate_human_activities(human)
             if human is not None:
                 self.humans.append(human)
@@ -283,7 +293,11 @@ class CrowdSim(gym.Env):
 
             static_human = self.generate_circle_crossing_human(region_idx=idx, static=True)
             static_human.isObstacle = True
-            self.generate_human_activities(static_human)
+            
+            if self.config.env.use_vlm:
+                self.generate_human_activities(static_human)
+            else: self.generate_human_activities(static_human)
+            
             self.humans.append(static_human)
             count += 1
             
@@ -318,8 +332,11 @@ class CrowdSim(gym.Env):
                 px = self.circle_radius * np.cos(angle) + px_noise
                 py = self.circle_radius * np.sin(angle) + py_noise
                 collide = False
-                for agent in [self.robot] + self.humans:
-                    min_dist = human.radius + agent.radius + self.discomfort_dist
+                for i, agent in [self.robot] + self.humans:
+                    if i == 0:
+                        min_dist = human.radius + agent.radius + self.discomfort_dist
+                    else:
+                        min_dist = human.radius + agent.radius + agent.discomfort_dist
                     if norm((px - agent.px, py - agent.py)) < min_dist or \
                                     norm((px - agent.gx, py - agent.gy)) < min_dist:
                         collide = True
@@ -623,7 +640,7 @@ class CrowdSim(gym.Env):
                         min_dist = 3
 
             else:
-                min_dist = radius + agent.radius + self.discomfort_dist
+                min_dist = radius + agent.radius + agent.discomfort_dist
             # todo: why the new human's position cannot collide with other agents' goal position???
             cond = norm((pos[0] - agent.px, pos[1] - agent.py)) < min_dist
             if cond:
@@ -828,7 +845,7 @@ class CrowdSim(gym.Env):
 
                     # check collision of start and goal position with static obstacles
                     if self.add_static_obs:
-                        if self.circle_in_obstacles(gx, gy, human.radius + self.discomfort_dist):
+                        if self.circle_in_obstacles(gx, gy, human.radius + human.discomfort_dist):
                             collide = True
                     if not collide:
                         break
@@ -984,7 +1001,7 @@ class CrowdSim(gym.Env):
             dy = human.py - self.robot.py
             closest_dist = (dx ** 2 + dy ** 2) ** (1 / 2) - human.radius - self.robot.radius
 
-            if closest_dist < self.discomfort_dist:
+            if closest_dist < human.discomfort_dist:
                 danger_dists.append(closest_dist)
             if closest_dist < 0:
                 collision = True
