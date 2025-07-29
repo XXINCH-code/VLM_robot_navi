@@ -714,7 +714,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
             cur_uid = self.free_human_uids.pop()
             self.humans[i].uid = cur_uid
-            # print('human', i, 'uid:', cur_uid
+            # print('human', i, 'uid:', cur_uid)
             self.used_human_uids.append(cur_uid)
             # height = np.random.uniform(0.2, 1.5)
             self._p.resetBasePositionAndOrientation(self.humans[i].uid,
@@ -949,8 +949,8 @@ class CrowdSim3DTB(CrowdSimVarNum):
         rgb = rgba[..., :3]
         rgbim = Image.fromarray(rgb)
 
-        # 显示 label
-        pts3d = np.array([[h.px, h.py, self.config.humans.height + 0.1] for h in self.humans])
+        # print the uid and activity of human
+        pts3d = np.array([[h.px-0.3, h.py, self.config.humans.height + 0.15] for h in self.humans])
         pix_coords = self.project_points(
             pts3d, view_matrix, projection_matrix,
             img_w=self.width, img_h=self.height
@@ -961,11 +961,11 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         for (x_pix, y_pix), human in zip(pix_coords, self.humans):
             if human.activity:
-                draw.text((x_pix, y_pix), str(human.activity), fill=(255, 0, 0), font=font)
+                text = f"{human.uid}: {human.activity}"
+                draw.text((x_pix, y_pix), text, fill=(255, 0, 0), font=font)
 
         return rgbim, depth, seg
-
-    
+  
     def keep_rendering(self):
         """
         Continuously render the environment, including the robot, humans, and their activities.
