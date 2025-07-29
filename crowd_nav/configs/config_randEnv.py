@@ -416,7 +416,7 @@ class Config(object):
     training.resume = 'rl'
     # if resume != 'none', load from the following checkpoint
     #training.load_path = 'trained_models/ours_HH_RH_randEnv/checkpoints/237800.pt'
-    training.load_path = 'data/ours_RH_HH_cornerEnv/checkpoints/04200.pt'
+    training.load_path = 'data/ours_RH_HH_cornerEnv/checkpoints/60200.pt'
     #training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/18000.pt'
     training.overwrite = True  # whether to overwrite the output directory in training
     training.num_threads = 1  # number of threads used for intraop parallelism on CPU

@@ -27,7 +27,7 @@ def main():
     config = Config()
 
     # Create directories for saving logs and weights
-    if not os.path.exists(config.training.output_dir):
+    if not os.path.exists(config.training.output_dir):     
         os.makedirs(config.training.output_dir)
     elif not config.training.overwrite:
         raise ValueError('output_dir already exists!')
@@ -207,34 +207,6 @@ def main():
             torch.save(actor_critic.state_dict(), os.path.join(save_path, '%.5i' % j + ".pt"))
             torch.save(checkpoint, os.path.join(save_path, '%.5i' % j + "_checkpoint.pt"))
 
-        '''
-        if len(episode_rewards) > 1:
-            total_num_steps = (j + 1) * config.training.num_processes * config.ppo.num_steps
-            end = time.time()
-            print("Updates {}, num timesteps {}, FPS {}\n Last {} training episodes: mean/median reward "
-                  "{:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n".format(
-                j, total_num_steps, int(total_num_steps / (end - start + time_diff)), len(episode_rewards),
-                np.mean(episode_rewards), np.median(episode_rewards), np.min(episode_rewards), np.max(episode_rewards)))
-
-            # Log to CSV
-            df = pd.DataFrame({
-                'misc/nupdates': [j],
-                'misc/total_timesteps': [total_num_steps],
-                'fps': int(total_num_steps / (end - start)),
-                'eprewmean': [np.mean(episode_rewards)],
-                'loss/policy_entropy': dist_entropy,
-                'loss/policy_loss': action_loss,
-                'loss/value_loss': value_loss
-            })
-
-            # Append or create new CSV based on file existence
-            csv_path = os.path.join(config.training.output_dir, 'progress.csv')
-            if os.path.exists(csv_path) and j > 20:
-                df.to_csv(csv_path, mode='a', header=False, index=False)
-            else:
-                df.to_csv(csv_path, mode='w', header=True, index=False)
-        
-        '''
         # Logging updates
         if j % config.training.log_interval == 0 and len(episode_rewards) > 1:
             total_num_steps = (j + 1) * config.training.num_processes * config.ppo.num_steps
