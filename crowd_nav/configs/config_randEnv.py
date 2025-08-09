@@ -40,15 +40,14 @@ class Config(object):
     # whether to use VLM for navigation, if "real", the robot will detect env and human activity by vlm
     env.use_vlm = True  # False means sim; True means real
     env.use_activity_weight = True  # whether to use human activity weight in attention mechanism
-    env.human_activity_beta = 2  # beta value for human activity weight, used in attention mechanism
     env.random_env = True  # whether to use random environment, if False, use fixed environment
-    '''
-    if env.use_vlm:
-        env.csl_workspace_type = np.random.choice(['corner', 'corridor'])
-    else:
-        # if env.scenario == 'csl_workspace', the environment is
-        env.csl_workspace_type = 'corner'  # hallway, lounge, corner, corridor
-    '''
+    env.test_in_pybullet = False  # whether to test the model with VLM in pybullet or not, if True, use VLM to  analyse images
+    env.human_activity_beta = 2  # beta value for human activity weight, used in attention mechanism
+    env.hard_block_th = 1.0       # 低于该权重的人的注意力在 softmax 前直接屏蔽
+    env.activity_gain_cap = 1.8
+    env.carrying_v_cap = 0.3
+    env.talking_wall_width = 0.5
+
     # robot action type
     action_space = BaseConfig()
     # holonomic or unicycle or turtlebot
@@ -65,7 +64,7 @@ class Config(object):
         ob_space.add_human_vel = False
     # include humans + obs in lidar pc, or only include obs
     # todo: change this
-    ob_space.lidar_pc_include_humans = False
+    ob_space.lidar_pc_include_humans = True
     # the human states are in robot frame or world frame
     if env.mode == 'sim':
         ob_space.human_state_frame = 'robot'
@@ -80,9 +79,9 @@ class Config(object):
     reward.collision_penalty = -20
     # discomfort distance
     reward.discomfort_dist = 0.3
-    reward.discomfort_penalty_factor = 10
+    reward.discomfort_penalty_factor = 15
     # dynamic navigation reward (diff envs)
-    reward.keep_right_coeff = 0.3 # original 0.3
+    reward.keep_right_coeff = 0.1 # original 0.3
     # penalty for robot speed in corner
     reward.corner_speed_penalty = 0.2  # original 0.2
     # reduce the potential reward for hierarchical policy with A*
@@ -182,8 +181,8 @@ class Config(object):
     else:
         robot.v_min = -0.5
         reward.back_factor = 0.1
-    robot.w_max = 1
-    robot.w_min = -1
+    robot.w_max = 1.5
+    robot.w_min = -1.5
     # robot FOV = this values * PI
     robot.FOV = 2.
     # include (gx, gy) in the robot state in observation or not
@@ -416,7 +415,7 @@ class Config(object):
     training.resume = 'rl'
     # if resume != 'none', load from the following checkpoint
     #training.load_path = 'trained_models/ours_HH_RH_randEnv/checkpoints/237800.pt'
-    training.load_path = 'data/ours_RH_HH_cornerEnv/checkpoints/60200.pt'
+    training.load_path = 'data/ours_RH_HH_cornerEnv/checkpoints/51000.pt'
     #training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/18000.pt'
     training.overwrite = True  # whether to overwrite the output directory in training
     training.num_threads = 1  # number of threads used for intraop parallelism on CPU
