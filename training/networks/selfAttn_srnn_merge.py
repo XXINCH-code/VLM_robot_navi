@@ -182,11 +182,16 @@ class EdgeAttention_M(nn.Module):
         #print("spatial_embed:", spatial_embed.shape)
 
         # impact of human activity priority
-        if self.config.env.use_activity_weight and self.config.env.use_vlm:
+        if self.config.env.use_vlm:
             activity_weight = activity_prior.squeeze(-1)  # static / talking / walking / running
-            #print("activity_weight:", activity_weight.shape)
-            #print("attn:", attn.shape)
             attn = attn + self.activity_beta * (activity_weight - 1.0)  
+
+            # 例：<=0.5 视作“强回避”（如 Talking），直接屏蔽
+            hard_block = (activity_weight <= self.config.env.hard_block_th)  # 新增阈值
+            attn = attn.masked_fill(hard_block, -1e9)  # 把低优先级活动的注意力值设为 -inf
+            # 对 >1 的（更重要）再做乘性放大
+            gain = torch.clamp(activity_weight, min=1.0, max=self.config.env.activity_gain_cap)
+            attn = attn * gain  # 对高优先级活动进行加权放大
 
         # Variable length
         temperature = num_edges / np.sqrt(self.attention_size)

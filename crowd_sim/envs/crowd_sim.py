@@ -2,7 +2,10 @@ import logging
 import gym
 import numpy as np
 import random
-
+import os
+import base64
+from openai import OpenAI
+from dotenv import load_dotenv
 
 from numpy.linalg import norm
 from crowd_sim.envs.utils.human import Human
@@ -106,7 +109,8 @@ class CrowdSim(gym.Env):
         else:
             raise NotImplementedError
         self.arena_size = config.sim.arena_size
-        self.case_counter = {'train': 0, 'test': 0, 'val': 0}
+        if self.case_counter is None:
+            self.case_counter = {'train': 0, 'test': 0, 'val': 0}
 
         if self.randomize_attributes:
             logging.info("Randomize human's radius and preferred speed")
@@ -197,7 +201,9 @@ class CrowdSim(gym.Env):
         self.obs_range = config.sim.static_obs_num_range
         self.max_obs_num = self.avg_obs_num + self.obs_range
         self.min_obs_num = self.avg_obs_num - self.obs_range
-        assert self.avg_obs_num > self.obs_range
+        #print(f"obs_range: {self.obs_range}, avg_obs_num: {self.avg_obs_num}")
+        #print(f"obs_range: {config.sim.static_obs_num_range}, avg_obs_num: {config.sim.static_obs_num}")
+        assert self.avg_obs_num >= self.obs_range
         # list to store all vertices of the walls/static obstacles in env
         # format for each obstacle: (lower left corner x, lower left corner y, width, height)
         self.obstacles = []
@@ -213,6 +219,52 @@ class CrowdSim(gym.Env):
 
     def set_robot(self, robot):
         raise NotImplementedError
+    
+    @staticmethod
+    def encode_image_from_bytes(image_bytes):
+        return base64.b64encode(image_bytes).decode("utf-8")
+
+    def query_vlm(self, image):
+        load_dotenv("openai.env")
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        image_payloads = [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{self.encode_image_from_bytes(image)}"
+                }
+            }
+        ]
+        #prompt_text = "Suppose you are a wheeled robot performing social navigation tasks in a simulation environment. All green cylinders in the picture are humans. Please judge the current human activity and the robot's current environment based on the image I uploaded. Please select one output from ['walking', 'carrying', 'static', 'talking'] and ['simple_corner', 'simple_corridor'] respectively. Requirement: Only output the judgment content, do not output redundant content, and do not explain why. Output format: human_id, human activity, env, give all the info of detected human in this format"
+        prompt_text = "Suppose you are a wheeled robot performing social navigation tasks in a simulation environment. All green cylinders in the picture are humans. Please judge the current human activity and the robot's current environment based on the image I uploaded. Please select one output from ['walking', 'carrying', 'static', 'talking'] and ['simple_corner', 'simple_corridor'] respectively. Requirement: Only output the judgment content, no explain. Output format: 'id, human activity, env'. Give all the info of detected human in this format"
+        messages = [
+            {"role": "user", "content": [*image_payloads, {"type": "text", "text": prompt_text}]}
+        ]
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", 
+            messages=messages,
+            max_tokens=200,
+            temperature=0.0, 
+        )
+
+        # seperate
+        entries = [entry.strip() for entry in response.choices[0].message.content.split("\n") if entry.strip()]
+
+        human_id_list = []
+        activities = []
+        scene_type_list = []
+        for entry in entries:
+            parts = entry.split(", ")
+            if len(parts) == 3:
+                human_id_list.append(parts[0])
+                activities.append(parts[1])
+                scene_type_list.append(parts[2])
+
+        print("VLM used successfully!")
+        return human_id_list, activities, scene_type_list
+
 
     def generate_human_activities(self, human):
         """
@@ -220,37 +272,109 @@ class CrowdSim(gym.Env):
         """
         if human.isObstacle:
             human.activity = random.choice(self.config.humans.static_activity)
-            if human.activity == 'static':
-                human.v_max = 0.0  
-            elif human.activity == 'talking':
-                human.v_max = 0.0  
+            self.set_basic_attributes(human)
         else:
             human.activity = random.choice(self.config.humans.dynamic_activity)
-            if human.activity == 'walking':
-                human.v_max = 1
-            elif human.activity == 'carrying':
+            self.set_basic_attributes(human)
+        
+        # set activity priorities based on the activity
+        if not self.config.env.test_in_pybullet:
+            self.set_activity_priorities(human)
+    
+
+    def set_basic_attributes(self, human):
+        if human.activity == 'talking':
+            human.v_max = 0.0
+        elif human.activity == 'static':
+            human.v_max = 0.0
+        elif human.activity == 'carrying':
+            human.v_max = 0.5
+        elif human.activity == 'walking':
+            if self.config.env.csl_workspace_type == 'open_space':
                 human.v_max = 0.5
-        self.set_activity_priorities(human)
-    
-    
+            else:
+                human.v_max = 0.8
+
     def set_activity_priorities(self, human):
         """
         Set activity priorities for a human.
         """
-        if self.config.env.use_activity_weight:
-            # Adjust discomfort distance based on activity
-            if human.activity == 'static':
-                human.discomfort_dist = 0.3
-                human.priority_coef = 0.8
-            elif human.activity == 'talking':
-                human.discomfort_dist = 0.4
-                human.priority_coef = 1.5
-            elif human.activity == 'walking':
-                human.discomfort_dist = 0.4
-                human.priority_coef = 1.0
-            elif human.activity == 'carrying':
-                human.discomfort_dist = 0.5
-                human.priority_coef = 1.25
+        # Adjust discomfort distance based on activity
+        
+        # if test_in_pybullet is False, use this part
+        
+        if human.activity == 'static':
+            human.v_max = 0.0  
+            human.discomfort_dist = 0.3
+            human.priority_coef = 0.8
+        elif human.activity == 'talking':
+            human.v_max = 0.0
+            human.discomfort_dist = 0.4
+            human.priority_coef = 1.75 # original 1.5
+        elif human.activity == 'walking':
+            if self.config.env.csl_workspace_type == 'open_space':
+                human.v_max = 0.5
+            else:
+                human.v_max = 0.8
+            human.discomfort_dist = 0.4
+            human.priority_coef = 1.0
+        elif human.activity == 'carrying':
+            human.v_max = 0.5
+            human.discomfort_dist = 0.5
+            human.priority_coef = 1.5 # original 1.25
+        '''
+        # this part is for sim2real
+        if human.detected_activity == 'static':
+            human.discomfort_dist = 0.3
+            human.priority_coef = 0.8
+        elif human.detected_activity == 'talking':
+            human.discomfort_dist = 0.5
+            human.priority_coef = 1.0
+        elif human.detected_activity == 'walking':
+            human.discomfort_dist = 0.5
+            human.priority_coef = 1.5
+        elif human.detected_activity == 'carrying':
+            human.discomfort_dist = 0.6
+            human.priority_coef = 1.25
+        '''
+        
+        
+    def generate_fixed_human_position(self, human_num, static_human_num=0):
+        for i in range(human_num):
+            human = self.generate_fixed_circle_crossing_human()
+            if i == 0:
+                human.activity = 'walking'
+                self.set_basic_attributes(human)
+            elif i == 1:
+                human.activity = 'carrying'
+                self.set_basic_attributes(human)
+            self.set_activity_priorities(human)
+
+            if human is not None:
+                self.humans.append(human)
+
+        for i in range(static_human_num):
+            static_human = self.generate_fixed_circle_crossing_human(human_idx=i, static=True)
+            static_human.isObstacle = True
+            if not self.config.env.random_env and self.config.env.csl_workspace_type == 'open_space':
+                if i == 0:
+                    static_human.activity = 'static'
+                    self.set_basic_attributes(static_human)
+                elif i == 1:
+                    static_human.activity = 'talking'
+                    self.set_basic_attributes(static_human)
+            elif not self.config.env.random_env and self.config.env.csl_workspace_type == 'simple_corner':
+                if i == 0:
+                    static_human.activity = 'static'
+                    self.set_basic_attributes(static_human)
+                elif i == 1:
+                    static_human.activity = 'talking'
+                    self.set_basic_attributes(static_human)
+                elif i == 2:
+                    static_human.activity = 'talking'
+                    self.set_basic_attributes(static_human)
+            self.set_activity_priorities(static_human)
+            self.humans.append(static_human)
     
     # add all generated humans to the self.humans list
     def generate_random_human_position(self, human_num, static_human_num=0):
@@ -268,7 +392,6 @@ class CrowdSim(gym.Env):
                 self.generate_human_activities(human)
             else: self.generate_human_activities(human)
             
-            self.generate_human_activities(human)
             if human is not None:
                 self.humans.append(human)
         

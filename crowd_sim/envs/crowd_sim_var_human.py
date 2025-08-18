@@ -14,8 +14,9 @@ from crowd_nav.policy.orca import ORCA
 This environment contains all non-pybullet part, 
 mainly the logic to span the ORCA humans and the robot, and stepping the ORCA humans
 '''
+from crowd_sim.envs.perception_mixin import VLMPerceptionMixin
 
-class CrowdSimVarNum(CrowdSim):
+class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
     def __init__(self):
         """
         Movement simulation for n+1 agents
@@ -23,7 +24,9 @@ class CrowdSimVarNum(CrowdSim):
         humans are controlled by a unknown and fixed policy.
         robot is controlled by a known and learnable policy.
         """
-        super().__init__()
+        #super().__init__()
+        VLMPerceptionMixin.__init__(self)
+        CrowdSim.__init__(self)
         self.desiredVelocity = [0.0, 0.0]
 
         self.id_counter = None
@@ -88,6 +91,7 @@ class CrowdSimVarNum(CrowdSim):
 
     def generate_robot(self):
         #theta = np.random.uniform(self.config.robot.initTheta_range[0], self.config.robot.initTheta_range[1])
+        # set the robot initial orientation
         theta = np.pi / 2
         num_obs_intersects = 4
         trial = 0
@@ -163,7 +167,9 @@ class CrowdSimVarNum(CrowdSim):
         self.static_human_num = np.random.randint(low=self.config.sim.static_human_num - self.config.sim.static_human_range,
                                            high=self.config.sim.static_human_num + self.config.sim.static_human_range + 1)
 
-        self.generate_random_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
+        if self.config.env.random_env: self.generate_random_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
+        else: self.generate_fixed_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
+        
         self.human_num = self.dynanmic_human_num + self.static_human_num
         #self.max_human_num = self.human_num + self.config.sim.human_num_range + self.config.sim.static_human_range
 
@@ -172,6 +178,138 @@ class CrowdSimVarNum(CrowdSim):
         for i in range(self.human_num):
             self.humans[i].id = i
 
+    def generate_fixed_circle_crossing_human(self, human_idx, static=False):
+    #def generate_circle_crossing_human(self, static=False):
+
+        human = Human(self.config, 'humans')
+
+        noise_range = self.config.sim.human_pos_noise_range
+        trial = 0
+
+        # if the routes of all humans are correlated, the routes are already chosen and stored in self.human_routes
+        if not static and self.config.human_flow.route_type == 'correlated':
+            this_human_route = self.human_routes.pop()
+
+        while True:
+            trial = trial + 1
+            # print(trial)
+            # to prevent the program from stucking in this loop
+            if trial > 100:
+                trial = 0
+                noise_range = noise_range * 1.5
+
+            # designed human flow
+            if self.config.env.scenario == 'csl_workspace':
+                if static and self.config.env.csl_workspace_type == 'simple_corner':
+                    if human_idx == 0:
+                        px = gx = 1.2
+                        py = gy = 2.5
+                    elif human_idx == 1:
+                        px = gx = -0.3
+                        py = gy = 5.1
+                    elif human_idx == 2:
+                        px = gx = 0.8
+                        py = gy = 5
+                elif static and self.config.env.csl_workspace_type == 'simple_corridor':
+                    if human_idx == 0:
+                        px = gx = 0.7
+                        py = gy = -2.5
+                    elif human_idx == 1:
+                        px = gx = -0.7
+                        py = gy = 1.7
+                    elif human_idx == 2:
+                        px = gx = -0.6
+                        py = gy = 2.6
+                elif static and self.config.env.csl_workspace_type == 'open_space':
+                    if human_idx == 0:
+                        px = gx = 0.6
+                        py = gy = 4
+                    elif human_idx == 1:
+                        px = gx = -0.6
+                        py = gy = 4
+                    elif human_idx == 2:
+                        px = gx = 0
+                        py = gy = 3
+                else:
+
+                    # choose route for this human
+                    if self.config.human_flow.route_type == 'independent':
+                        if self.human_facing_robot:
+                            route_idx = np.random.choice(len(self.config.human_flow.routes)-4)
+                        else:
+                            route_idx = np.random.choice(len(self.config.human_flow.routes))
+                        human.route = copy.deepcopy(self.config.human_flow.routes[route_idx])
+                    # else if self.config.human_flow.route_type == 'correlated', human route is already chosen above
+                    else:
+                        human.route = copy.deepcopy(this_human_route)
+                    # print(human.route)
+                    start_region = human.route.pop(0)
+                    goal_region = human.route.pop(0)
+
+                    # print('start region', start_region, 'goal_region', goal_region)
+
+                    px = np.random.uniform(self.config.human_flow.regions[start_region][0], self.config.human_flow.regions[start_region][1])
+                    py = np.random.uniform(self.config.human_flow.regions[start_region][2],
+                                           self.config.human_flow.regions[start_region][3])
+                    gx = np.random.uniform(self.config.human_flow.regions[goal_region][0], self.config.human_flow.regions[goal_region][1])
+                    gy = np.random.uniform(self.config.human_flow.regions[goal_region][2],
+                                           self.config.human_flow.regions[goal_region][3])
+            # circle crossing
+            else:
+                angle = np.random.random() * np.pi * 2
+                # add some noise to simulate all the possible cases robot could meet with human
+                px_noise = np.random.uniform(-1, 1) * noise_range
+                py_noise = np.random.uniform(-1, 1) * noise_range
+                px = self.circle_radius * np.cos(angle) + px_noise
+                py = self.circle_radius * np.sin(angle) + py_noise
+                gx = -px
+                gy = -py
+
+            collide_obs = False
+            # check collision of start and goal position with static obstacles
+            if self.add_static_obs:
+                #start_collision = self.circle_in_obstacles(px, py, human.radius + self.discomfort_dist)
+                #goal_collision = self.circle_in_obstacles(gx, gy, human.radius + self.discomfort_dist)
+                start_collision = self.circle_in_obstacles(px, py, human.radius)
+                goal_collision = self.circle_in_obstacles(gx, gy, human.radius)
+                if start_collision or goal_collision:
+                    collide_obs = True
+                    # print('collide obs')
+
+            # check collision with the robot and all other existing humans
+            collide_human = self.check_collision((px, py), human.radius, static=static)
+
+            collide_robot_goal = False
+            if static:
+                if np.linalg.norm([px-self.robot.gx, py-self.robot.gy]) <= (self.robot.radius + human.radius)*2:
+                    collide_robot_goal = True
+                    # print('collide robot goal')
+
+            if not collide_obs and not collide_human and not collide_robot_goal:
+                break
+
+        # print('chosen px, py, gx, gy', px, py, gx, gy)
+        # print('human dist to rob:', np.linalg.norm([px - self.robot.px, py - self.robot.py]))
+        human.set(px, py, gx, gy, 0, 0, 0)
+
+        # # shift the center of circle up so that the bottom of the circle is at (0, 0)
+        if self.robot.kinematics == 'turtlebot':
+            if static:
+                human.react_to_robot = False
+            else:
+                if np.random.rand() <= self.config.robot.visible_prob:
+                    human.react_to_robot = True
+                else:
+                    human.react_to_robot = False
+
+        # if we have static obstacles, feed them to the humans' ORCA policy so that the humans can avoid them
+        if self.add_static_obs:
+            if self.config.humans.policy == 'orca':
+                assert isinstance(human.policy, ORCA)
+                human.policy.static_obs = self.obstacle_coord
+
+        # print('Done with this human')
+        return human
 
     # more uniform circle crossing scenario
     def generate_circle_crossing_human(self, region_idx=None, static=False):
@@ -404,22 +542,10 @@ class CrowdSimVarNum(CrowdSim):
         return reward
 
     def get_priority_vlm(self):
-        '''
-        _, _, rgb, _, _ = self.get_camera_image()
-        
-        scene_type, activities = self.infer_scene_activity(np.asarray(rgb, dtype=np.uint8))
-        self.scene_prior = scene_type 
-        self.activities_vlm = {h.id: act for h, act in zip(visible_humans, activities)}
-        for h in visible_humans:                             # 给每个人挂属性
-            h.activity = self.activities_vlm.get(h.id, None)
-            self.set_activity_priorities(h)
-        '''
-        scene_prior = self.config.env.csl_workspace_type
-
-        return scene_prior
+        return self.config.env.csl_workspace_type
 
     # find R(s, a), done or not, and episode information
-    def calc_reward(self, action, danger_zone='circle'):
+    def calc_reward(self, action, rgb_image=None, danger_zone='circle'):
 
         # collision checking
         collision, dmin, collision_with, close_humans = self.collision_checker()
@@ -495,7 +621,12 @@ class CrowdSimVarNum(CrowdSim):
             done = False
             episode_info = Nothing()
 
-        scene_idx = self.get_priority_vlm()
+        
+        if self.config.env.test_in_pybullet:
+            scene_idx = self.scene_type
+        else:
+            scene_idx = self.get_priority_vlm()
+
         if scene_idx == 'simple_corridor':  # corridor
             # 鼓励靠右行驶：机器人 y 越偏右（y 越负），reward 越高
             x = self.robot.px
@@ -535,46 +666,6 @@ class CrowdSimVarNum(CrowdSim):
 
         # print(reward)
         return reward, done, episode_info
-
-    # reset = True: reset calls this function; reset = False: step calls this function
-    def generate_ob(self, reset):
-        ob = {}
-
-        # nodes
-        visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
-
-        ob['robot_node'] = self.robot.get_full_state_list_noV()
-
-        self.update_last_human_states(self.human_visibility, reset=reset)
-
-        # edges
-        ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
-
-        # ([relative px, relative py, disp_x, disp_y], human id)
-        all_spatial_edges = np.ones((self.config.sim.human_num + self.config.sim.human_num_range, 2)) * np.inf
-
-        for i in range(self.human_num):
-            if self.human_visibility[i]:
-                # vector pointing from human i to robot
-                relative_pos = np.array(
-                    [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
-                all_spatial_edges[self.humans[i].id, :2] = relative_pos
-
-        # sort all humans by distance (invisible humans will be in the end automatically)
-        ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x)))
-        ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
-
-        ob['detected_human_num'] = num_visibles
-        # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
-        if ob['detected_human_num'] == 0:
-            ob['detected_human_num'] = 1
-
-        # update self.observed_human_ids
-        self.observed_human_ids = np.where(self.human_visibility)[0]
-        self.ob = ob
-
-        return ob
-
 
 
     def reset(self, phase='train', test_case=None):

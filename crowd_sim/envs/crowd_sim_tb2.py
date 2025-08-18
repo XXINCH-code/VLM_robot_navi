@@ -8,8 +8,10 @@ from PIL import Image, ImageFilter
 import imageio
 import io
 import json
+import math
 from PIL import ImageDraw, ImageFont
 from crowd_nav.configs.config_randEnv import Config
+#from crowd_nav.configs.config_unchangedEnv import Config
 
 import pybullet as p
 from pybullet_utils import bullet_client
@@ -25,6 +27,7 @@ from crowd_nav.policy.policy_factory import policy_factory
 
 from crowd_sim.pybullet.scene_abstract import SingleRobotEmptyScene
 from crowd_sim.envs.crowd_sim_var_human import CrowdSimVarNum
+from crowd_sim.envs.perception_mixin import VLMPerceptionMixin
 
 '''
 This environment contains all pybullet part.
@@ -34,7 +37,9 @@ Everything is the same as CrowdSimVarNum, except the original holomonic/unicycle
 
 class CrowdSim3DTB(CrowdSimVarNum):
     def __init__(self):
-        super().__init__()
+        #super().__init__()
+        VLMPerceptionMixin.__init__(self)
+        CrowdSimVarNum.__init__(self)
         self.id_counter = None
         self.observed_human_ids = None
 
@@ -57,8 +62,10 @@ class CrowdSim3DTB(CrowdSimVarNum):
         self.cylinder_obs_uids = []
 
         self.images = []
+        self.robot_fov_images = []
 
         self.save_dir = None
+        self.save_dir_robot_fov = None
 
     def configure(self, config):
         # ray test
@@ -281,12 +288,16 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         # parse the results and visualize lidar rays
 
+        self.hit_positions = np.zeros((ray_num, 3))
         for i in range(ray_num):
             self.closest_hit_dist[i] = results[i][2] * self.robot.sensor_range
             # only add human ids, assume other objects are undetectable with 2D lidar
             if results[i][0] in self.used_human_uids:
                 self.closest_hit_id[i] = results[i][0]
                 self.visible_human_uids.add(results[i][0]) # set can avoid duplicates
+            
+            self.hit_positions[i] = results[i][3]
+            
             if self.config.lidar.visualize_rays:
                 if camera_fov:
                     pass
@@ -303,24 +314,27 @@ class CrowdSim3DTB(CrowdSimVarNum):
                     else:
                         p.addUserDebugLine(self.rayFrom[i], results[i][3], self.rayHitColor,
                                            replaceItemUniqueId=self.rayIDs[i])
+    
+    def render_lidar_on_images(self, rgbim, view_matrix, projection_matrix):
+        """
+        render the lidar point clouds as black dots on the rgb image
+        """
+        # 已有：self.hit_positions 是 (N,3) 点云世界坐标
+        # put the lidar points on the rgb image
+        pix = self.project_points(self.hit_positions, view_matrix, projection_matrix,
+                                img_w=self.render_img_w, img_h=self.render_img_h)  # (N,2)
 
-    def render_lidar_pc(self):
-        '''
-        plot the lidar point clouds as black dots
-        '''
-        pc_list = np.ones((self.ray_num, 3)) * self.lidar_height
-        # convert from polar coordinate to Eulidean coordinate
-        pc_list[:, 0] = self.closest_hit_dist * np.cos(self.ray_angles) + self.robot.px
-        pc_list[:, 1] = self.closest_hit_dist * np.sin(self.ray_angles) + self.robot.py
-        color = np.zeros((self.ray_num, 3))
-        if len(self.cam_pc_ids) == 0:
-            self.cam_pc_ids.append(p.addUserDebugPoints(pc_list, color.tolist(), pointSize=2))
-        else:
-            p.addUserDebugPoints(pc_list, color.tolist(), replaceItemUniqueId=self.cam_pc_ids[0], pointSize=2)
+        draw = ImageDraw.Draw(rgbim)
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", size=8)
+        r = 0.2  
+        for x, y in pix:
+            draw.ellipse((x-r, y-r, x+r, y+r), fill=(0, 0, 0))
 
+        return rgbim
+    
     def get_num_human_in_fov(self):
         # use ray test to check visibility of each human
-        human_ids = []
+        human_visibility = []
         humans_in_view = []
         num_humans_in_view = 0
 
@@ -331,70 +345,19 @@ class CrowdSim3DTB(CrowdSimVarNum):
         for i in range(self.human_num):
             visible = True if self.humans[i].uid in self.visible_human_uids else False
             if visible:
-                humans_in_view.append(self.humans[i])
+                humans_in_view.append(self.humans[i].uid)
                 num_humans_in_view = num_humans_in_view + 1
-                human_ids.append(True)
+                human_visibility.append(True)
             else:
-                human_ids.append(False)
+                human_visibility.append(False)
 
-        return humans_in_view, num_humans_in_view, human_ids
+        return humans_in_view, num_humans_in_view, human_visibility
 
     
     
     # -----------------------------------------------------------------
     # Function block for generating observations
     # -----------------------------------------------------------------
-    '''
-    def generate_ob(self, reset):
-        # print("check robot node inside 1: ", ob["robot_node"])
-        ob = {}
-
-        # nodes
-        visible_humans, num_visibles, self.human_visibility = self.get_num_human_in_fov()
-
-        if self.config.ob_space.robot_state == 'absolute':
-            ob['robot_node'] = self.robot.get_changing_state_list()
-        else:
-            ob['robot_node'] = self.robot.get_changing_state_list_goal_offset()
-
-        # print("check robot node inside 2: ", ob["robot_node"])
-
-        self.update_last_human_states(self.human_visibility, reset=reset)
-
-        # edges
-        ob['temporal_edges'] = np.array([self.robot.vx, self.robot.vy])
-
-        # ([relative px, relative py, disp_x, disp_y], human id)
-        # make sure there's at least one placeholder
-        if self.config.ob_space.add_human_vel:
-            all_spatial_edges = np.ones((max(1, self.max_human_num), 4)) * np.inf
-        else:
-            all_spatial_edges = np.ones((max(1, self.max_human_num), 2)) * np.inf
-
-        for i in range(self.human_num):
-            if self.human_visibility[i]:
-                # vector pointing from human i to robot
-                relative_pos = np.array(
-                    [self.last_human_states[i, 0] - self.robot.px, self.last_human_states[i, 1] - self.robot.py])
-                all_spatial_edges[self.humans[i].id, :2] = relative_pos
-                if self.config.ob_space.add_human_vel:
-                    # todo: for now the human velocities are in world frame, check zed2 for frame transformation
-                    all_spatial_edges[self.humans[i].id, 2:] = self.last_human_states[i, 2:4]
-        # sort all humans by distance (invisible humans will be in the end automatically)
-        ob['spatial_edges'] = np.array(sorted(all_spatial_edges, key=lambda x: np.linalg.norm(x[:2])))
-        ob['spatial_edges'][np.isinf(ob['spatial_edges'])] = 15
-
-        ob['detected_human_num'] = num_visibles
-        # if no human is detected, assume there is one dummy human at (15, 15) to make the pack_padded_sequence work
-        if ob['detected_human_num'] == 0:
-            ob['detected_human_num'] = 1
-
-        # update self.observed_human_ids
-        self.observed_human_ids = np.where(self.human_visibility)[0]
-        self.ob = ob
-
-        return ob
-    '''
     
 
     # -----------------------------------------------------------------
@@ -579,7 +542,10 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
             # todo: add tb2 here
             # robot height must be < self.lidar.height!!!
-            self.robot.uid = p.loadURDF("crowd_sim/pybullet/media/turtlebot2/turtlebot.urdf", [0, 0, 0])
+            yaw = math.radians(90)  # 转向 +Y 方向
+            quat = p.getQuaternionFromEuler([0, 0, yaw])
+            self.robot.uid = p.loadURDF("crowd_sim/pybullet/media/turtlebot2/turtlebot.urdf", 
+                                        [0, 0, 0], baseOrientation=quat)
 
             # todo: add "sim.static_obs_num+sim.static_obs_num_range" static obs
             # todo: fix the obs width and height, only vary (px, py, pz, theta) here, theta \in {0, 90}
@@ -780,7 +746,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
                 collision_with = 'human'
                 break
             else:
-                closest_points = p.getClosestPoints(self.robot.uid, human.uid, distance=1000.0, linkIndexA=-1,
+                closest_points = p.getClosestPoints(self.robot.uid, human.uid, distance=100.0, linkIndexA=-1,
                                                     linkIndexB=-1)
                 if closest_points:
                     # The closest points are typically in closest_points[0], check its distance
@@ -910,13 +876,13 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
     def get_camera_image_with_labels(self):
         """
-        获取机器人相机图像，并在图像上添加每个人的 activity label（使用 PIL）
+        get the camera image with labels of humans activities.
         """
-        # 相机位姿（与 get_camera_image() 一样）
+        # same as get_camera_image, but with labels
         basePos, baseOrientation = p.getBasePositionAndOrientation(self.robot.uid)
         basePos = np.array(basePos)
         matrix = p.getMatrixFromQuaternion(baseOrientation)
-        tx_vec = np.array([matrix[0], matrix[3], matrix[6]])
+        tx_vec = np.array([matrix[0], matrix[3], matrix[6]]) 
         tz_vec = np.array([matrix[2], matrix[5], matrix[8]])
 
         camera_position = basePos + self.robot.radius * tx_vec + 0.5 * self.camera_height * tz_vec
@@ -942,7 +908,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
             height=self.height,
             viewMatrix=view_matrix,
             projectionMatrix=projection_matrix,
-            renderer=p.ER_BULLET_HARDWARE_OPENGL,  # 强制使用 PyBullet 内部渲染器
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,  
             physicsClientId=self.physicsClientId
         )
         rgba = np.reshape(rgba, (height, width, 4)).astype(np.uint8)
@@ -959,11 +925,15 @@ class CrowdSim3DTB(CrowdSimVarNum):
         draw = ImageDraw.Draw(rgbim)
         font = ImageFont.truetype("DejaVuSans-Bold.ttf", size=20)
 
+        _, _, human_visibility = self.get_num_human_in_fov()
+
         for (x_pix, y_pix), human in zip(pix_coords, self.humans):
-            if human.activity:
+            if human.activity and human_visibility[human.id]:
                 text = f"{human.uid}: {human.activity}"
                 draw.text((x_pix, y_pix), text, fill=(255, 0, 0), font=font)
 
+        draw.text((self.robot.px, self.robot.py), f"vel: {self.robot.v:.4f}", fill=(0, 255, 0), font=font)
+    
         return rgbim, depth, seg
   
     def keep_rendering(self):
@@ -974,8 +944,9 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # keep rendering the camera image with labels，and save it
         rgbim, _, _ = self.get_camera_image_with_labels()
         rgbim.save("debug_image_with_labels.png")
-        #self.get_camera_image()
-        #self.render_lidar_pc()
+
+        #self.render_lidar_on_images()
+        return rgbim
 
 
 
@@ -997,6 +968,117 @@ class CrowdSim3DTB(CrowdSimVarNum):
         new_left, new_right = left, right
         left_noise, right_noise = np.random.normal(0, 0.15, size=2)
         return new_left + left_noise, new_right + right_noise
+    
+    def _social_filter_vw(self, v, w):
+        """
+        输入: 期望的线/角速度 (v, w)
+        输出: 经过 VLM 驱动的社会规则裁剪后的 (v, w)
+        规则包含：
+        - Talking: 两人对话的“谈话线”形成软墙，禁止穿越
+        - Carrying: 搬运者前扇区禁抢道 -> 限制 v 上限
+        - Corridor: 走廊靠右微偏、禁止左侧超车
+        - Corner: 拐角区域限速
+        """
+        if not (getattr(self.config.env, 'use_vlm', False)):
+            return v, w
+
+        # -----------------------------
+        # 0) Gather 当前机器人&人类状态
+        # -----------------------------
+        rx, ry, rth = self.robot.px, self.robot.py, self.robot.theta
+        # 预测一步（小前瞻），使用 env 的控制周期
+        dt = float(self.config.env.time_step) if hasattr(self.config.env, 'time_step') else 0.1
+        # unicycle 模型简单前瞻
+        x_next = rx + v * np.cos(rth) * dt
+        y_next = ry + v * np.sin(rth) * dt
+
+        # -----------------------------
+        # 1) Corner 场景：限速（硬帽）
+        # -----------------------------
+        # 场景标签通常来自 VLM 识别，你已在 obs 里喂给网络；env 侧可读配置作为近似（random_env -> simple_corner/simple_corridor）
+        scene = self.scene_type
+        if scene == 'corner':
+            v = np.clip(v, self.config.robot.v_min, min(self.config.robot.v_max,
+                    self.config.env.carrying_v_cap))  # 复用 carrying_v_cap 当作角落限速帽
+
+        # -----------------------------
+        # 2) Carrying：前扇区禁抢道 -> 限制 v 上限
+        # -----------------------------
+        v_cap_carry = self.config.env.carrying_v_cap  # 默认 0.35 m/s
+        sector_half_ang = np.deg2rad(30)
+        sector_radius =  getattr(self.config.reward, 'discomfort_dist', 0.3) + 0.3  # 在不适圈基础上放大
+        for h in self.humans:
+            # 识别活动（优先使用 VLM 注入的属性；没有则以速度大小粗分）
+            act = getattr(h, 'detected_activity', None)
+            spd = np.hypot(h.vx, h.vy)
+            is_carry = (act == 'Carrying') or (act is None and spd > 0.05 and getattr(h, 'isObstacle', False) is False and getattr(h, 'carrying_like', False) is True)
+            if not is_carry:
+                continue
+            # 用速度方向近似朝向，若速度太小则跳过
+            if spd < 0.05:
+                continue
+            hth = np.arctan2(h.vy, h.vx)
+            # 机器人下一步是否落入其“前扇区”
+            relx, rely = x_next - h.px, y_next - h.py
+            dist = np.hypot(relx, rely)
+            if dist < h.radius + h.discomfort_dist + 0.3:  # 在半径范围内
+                bearing = np.arctan2(rely, relx)
+                angdiff = np.arctan2(np.sin(bearing - hth), np.cos(bearing - hth))
+                if np.abs(angdiff) <= sector_half_ang:
+                    v = min(v, v_cap_carry)  # 一刀切限速
+                    break
+
+        # -----------------------------
+        # 3) Talking：谈话线不可穿越（线段相交判定）
+        # -----------------------------
+        wall_w = getattr(self.config.env, 'talking_wall_width', 0.5)
+        # 粗判“对话对”：彼此速度小、相互面对（这里简单用速度都很小近似静立交谈）
+        talking_pairs = []
+        static_like = lambda human: (np.hypot(human.vx, human.vy) < 0.05) and (not getattr(human, 'isObstacle', False))
+        cand = [h for h in self.humans if static_like(h)]
+        for i in range(len(cand)):
+            for j in range(i + 1, len(cand)):
+                hi, hj = cand[i], cand[j]
+                d = np.hypot(hi.px - hj.px, hi.py - hj.py)
+                if d <= 1.5:  # 两人距离较近
+                    talking_pairs.append((hi, hj))
+
+        def seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+            # 简单双向跨立判定
+            def cross(x1,y1,x2,y2,x3,y3): return (x2-x1)*(y3-y1)-(y2-y1)*(x3-x1)
+            c1 = cross(ax,ay,bx,by,cx,cy); c2 = cross(ax,ay,bx,by,dx,dy)
+            c3 = cross(cx,cy,dx,dy,ax,ay); c4 = cross(cx,cy,dx,dy,bx,by)
+            return (c1*c2<=0) and (c3*c4<=0)
+
+        # 机器人步进线段
+        ax, ay, bx, by = rx, ry, x_next, y_next
+
+        for (hi, hj) in talking_pairs:
+            # 对话线段
+            cx, cy, dx, dy = hi.px, hi.py, hj.px, hj.py
+            # 近似“带宽”处理：把对话线两侧各扩张 wall_w，可用平移向量创建两条平行线段做快速近似（这里取中心线直接判交，命中即降速躲避）
+            if seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+                # 第一策略：保角度降速
+                v = min(v, 0.2)
+                # 如果仍然会穿越，可在主循环外再做一次“右偏一点”的微调，这里留给简单实现
+                break
+
+        # -----------------------------
+        # 4) Corridor：靠右通行（小角速度偏置）
+        # -----------------------------
+        if scene == 'corridor':
+            # 右偏一个很小的角速度（不覆盖 agent 的转向，只是 bias）
+            w = w - 0.05  # 让机器人向右微偏，数值可调
+
+        return v, w
+    
+    @staticmethod
+    def world_to_robot_sim(px, py, x0, y0, cos_yaw, sin_yaw):
+        # rotate the world coordinates (px, py) to the robot's local frame
+        dx, dy = px - x0, py - y0
+        forward  =  dx * cos_yaw + dy * sin_yaw
+        lateral  = -dx * sin_yaw + dy * cos_yaw
+        return forward, lateral
     
     @staticmethod
     def project_points(pts3d, view_matrix, projection_matrix, img_w, img_h):
@@ -1040,7 +1122,15 @@ class CrowdSim3DTB(CrowdSimVarNum):
                 txt = str(human.activity)
                 draw.text((x_pix, y_pix), txt, fill=(255,0,0), font=font)
 
-    def render_scene(self):
+        rob3d = np.array([[self.robot.px, self.robot.py, self.config.humans.height]])  # 机器人“身高”处
+        rob_px = self.project_points(
+            rob3d, view_matrix, projection_matrix,
+            img_w=self.render_img_w, img_h=self.render_img_h
+        )[0]
+        font2 = ImageFont.truetype("DejaVuSans-Bold.ttf", size=10)
+        draw.text((265, 215), f"vel: {self.robot.v:.3f}", fill=(255, 0, 0), font=font2)
+
+    def render_scene(self, VLM_is_used):
         """
         Read rgbd image from camera, save them in self.rgb_img & self.depth_img
         """
@@ -1065,16 +1155,49 @@ class CrowdSim3DTB(CrowdSimVarNum):
         _, _, self.rgb_img, _, _ = p.getCameraImage(self.render_img_w, self.render_img_h,
                                                                  view_matrix,
                                                                  projection_matrix,
-                                                                 shadow=False,
-                                                                 flags=self._p.ER_NO_SEGMENTATION_MASK,
-                                                                 renderer=self._p.ER_TINY_RENDERER)
+                                                                 #shadow=False,
+                                                                 #flags=self._p.ER_NO_SEGMENTATION_MASK,
+                                                                 #renderer=self._p.ER_TINY_RENDERER,
+                                                                 renderer=p.ER_BULLET_HARDWARE_OPENGL,
+                                                                 physicsClientId=self.physicsClientId)
 
         # only keep (r, g, b), remove alpha
         self.rgb_img = self.rgb_img[:, :, :-1]
-
         # for save_slides use
         rgbim = Image.fromarray(self.rgb_img)
 
+        # render lidar on rgbim
+        rgbim = self.render_lidar_on_images(rgbim, view_matrix, projection_matrix)
+
+        # draw the comfort and discomfort zones of humans
+        draw = ImageDraw.Draw(rgbim)
+        rob_pos_2d = np.array([self.robot.px, self.robot.py])
+        for h in self.humans:
+            thetas = np.linspace(0, 2*np.pi, num=72, endpoint=False)
+            circle_pts = np.stack([
+                h.px + (h.radius + h.discomfort_dist) * np.cos(thetas),
+                h.py + (h.radius + h.discomfort_dist) * np.sin(thetas),
+                np.zeros_like(thetas)
+            ], axis=1)  # (36,3)
+
+            # put the circle points into the robot's camera view
+            pix_circle = self.project_points(
+                circle_pts, view_matrix, projection_matrix,
+                img_w=self.render_img_w, img_h=self.render_img_h
+            )  # (36,2)
+
+            dist2d = np.linalg.norm(rob_pos_2d - np.array([h.px, h.py]))
+            outline_color = (255,0,0) if dist2d < (h.discomfort_dist + h.radius) else (0,255,0)
+
+            pts = [tuple(pt) for pt in pix_circle]
+            pts.append(pts[0])
+            draw.line(pts, fill=outline_color, width=2)
+        
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", size=10)
+        if VLM_is_used:
+            draw.text((265, 230), f"VLM detecting!", fill=(255, 0, 0), font=font)
+
+        # render the human activity labels
         self.show_label(rgbim, view_matrix, projection_matrix)
 
         rgbim = rgbim.crop((250/900*self.render_img_w, 200/900*self.render_img_h, 600/900*self.render_img_w, 600/900*self.render_img_h))
@@ -1085,13 +1208,30 @@ class CrowdSim3DTB(CrowdSimVarNum):
                                 str(self.min_obs_num) + 'to' + str(self.max_obs_num) + 'obs',
                                 self.config.camera.render_checkpoint,
                                 str(self.rand_seed) + '_' + str(self.case_counter['test'] - 1))
+        save_dir_robot_fov = os.path.join(self.config.training.output_dir, 'test_slideshows',
+                                str(self.min_human_num) + 'to' + str(self.max_human_num) + 'humans_' +
+                                str(self.min_obs_num) + 'to' + str(self.max_obs_num) + 'obs',
+                                self.config.camera.render_checkpoint,
+                                str(self.rand_seed) + '_' + str(self.case_counter['test'] - 1),
+                                'robot_fov')
         self.save_dir = save_dir
+        self.save_dir_robot_fov = save_dir_robot_fov
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        # 这行用于保存每一帧的图片
+        if not os.path.exists(save_dir_robot_fov):
+            os.makedirs(save_dir_robot_fov)
         rgbim.save(os.path.join(save_dir, str(self.step_counter) +'.png'))
+        rgbim_robot_fov, _, _ = self.get_camera_image_with_labels()
+        rgbim_robot_fov.save(os.path.join(save_dir_robot_fov, str(self.step_counter) + '_robot_fov.png'))
         self.images.append(rgbim)
+        self.robot_fov_images.append(rgbim_robot_fov)
 
+    @staticmethod
+    def encode_image(image_np):
+        buf = io.BytesIO()
+        image_np.save(buf, format='PNG')
+        image_bytes = buf.getvalue()
+        return image_bytes
 
 
     # -----------------------------------------------------------------
@@ -1106,10 +1246,19 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # reset()→ generate_robot_humans()→ generate_random_human_position()→ generate_circle_crossing_human()
         human_actions = self.get_human_actions()
 
+        VLM_is_used = False
+
         # !!! close it before training, otherwise it will cause delay
-        self.keep_rendering()
+        #rgbim = self.keep_rendering()
+        # ！！！在测试的时候不能注释！！！
+        #rgbim, _, _ = self.get_camera_image_with_labels()
 
         # compute reward and episode info
+        if self.config.env.test_in_pybullet:
+            #rgbim, _, _ = self.get_camera_image_with_labels()
+            encoded = self.encode_image(rgbim) #if rgbim is not None else None
+            VLM_is_used = self.upload_images_to_vlm(encoded)
+            
         reward, done, episode_info = self.calc_reward(action)
 
         if self.config.env.action_space == 'continuous':
@@ -1122,16 +1271,31 @@ class CrowdSim3DTB(CrowdSimVarNum):
             delta_v, delta_w = self.action_convert[action]
             self.desiredVelocity[0] = np.clip(self.desiredVelocity[0] + delta_v, self.config.robot.v_min, self.config.robot.v_max)
             self.desiredVelocity[1] = np.clip(self.desiredVelocity[1] + delta_w, self.config.robot.w_min, self.config.robot.w_max)
+            
+            
+            # === 新增“社会过滤” ===
+            v, w = self._social_filter_vw(self.desiredVelocity[0], self.desiredVelocity[1])
+            self.desiredVelocity[0], self.desiredVelocity[1] = v, w
+
+            '''
+            obs_x_low, obs_y_low, obs_x_high, obs_y_high = self.obstacle_vertices
+            walls = [(obs_x_low[i], obs_y_low[i], obs_x_high[i], obs_y_high[i]) for i in range(self.obs_num)]
+            min_gap = 
+            if min_gap < 0.45:  # 如果前方间隙小于 0.45 米，进一步降低速度
+                # 禁止向右的小摆动，允许适当左转
+                w = min(w, +0.2)
+                v = min(v, 0.25)
+            '''
+
             left = (2. * self.desiredVelocity[0] - 0.23 * self.desiredVelocity[1]) / (2. * 0.035)
             right = (2. * self.desiredVelocity[0] + 0.23 * self.desiredVelocity[1]) / (2. * 0.035)
-        # print(self.desiredVelocity)
 
         # simulate the turtlebot dynamics
         left, right = self.tb2_dynamics(left, right)
 
         # todo: what should be the value of force (maximum motor force)?
-        #p.setJointMotorControl2(self.robot.uid, 0, p.VELOCITY_CONTROL, targetVelocity=left, force=10)
-        #p.setJointMotorControl2(self.robot.uid, 1, p.VELOCITY_CONTROL, targetVelocity=right, force=10)
+        p.setJointMotorControl2(self.robot.uid, 0, p.VELOCITY_CONTROL, targetVelocity=left, force=10)
+        p.setJointMotorControl2(self.robot.uid, 1, p.VELOCITY_CONTROL, targetVelocity=right, force=10)
 
         # get the new robot state from PyBullet, then set it to the robot instance (to keep consistency with the rest of repo)
         [robot_px, robot_py, _], quaternion_angle = p.getBasePositionAndOrientation(self.robot.uid)
@@ -1234,7 +1398,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         # if test.py requires to save slides, save top-down camera image to disk
         # only save the first 20 episodes
         if self.config.camera.render_checkpoint is not None and self.case_counter['test']<self.config.env.test_size:
-            self.render_scene()
+            self.render_scene(VLM_is_used)
 
         if done:
             # move all cylinders to a dummy pos if an episode ends
@@ -1269,6 +1433,8 @@ class CrowdSim3DTB(CrowdSimVarNum):
         if done:
             if len(self.images) != 0:
                 imageio.mimsave(f"{self.save_dir}/output.gif", self.images)
+                imageio.mimsave(f"{self.save_dir_robot_fov}/robot_fov_output.gif", self.robot_fov_images)
+                self.robot_fov_images.clear()
                 self.images.clear()
             if self.record:
                 self.episodeRecoder.saveEpisode(self.case_counter['test'])

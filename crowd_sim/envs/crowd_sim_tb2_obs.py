@@ -59,7 +59,7 @@ class CrowdSim3DTbObs(CrowdSim3DTB):
         # 3. raw lidar point cloud from robot's 2D lidar
         d['point_clouds'] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(1, self.ray_num,), dtype=np.float32)
 
-        if self.config.env.use_activity_weight and self.config.env.use_vlm:
+        if self.config.env.use_vlm:
             # VLM priors
             d['scene_prior']    = gym.spaces.Box(low=0, high=1, shape=(1, 3), dtype=np.float32)     # one-hot 2 类
             d['activity_prior'] = gym.spaces.Box(low=0, high=1, shape=(max(1, self.max_human_num), 1),
@@ -70,6 +70,12 @@ class CrowdSim3DTbObs(CrowdSim3DTB):
     
     def generate_circle_crossing_human(self, region_idx=None, static=False):
         human = super().generate_circle_crossing_human(region_idx=region_idx, static=static)
+        human.recent_speeds = deque(maxlen=self.human_timeout_len*2)
+        human.recent_speeds.append(norm([human.vx, human.vy]))
+        return human
+    
+    def generate_fixed_circle_crossing_human(self, human_idx=None, static=False):
+        human = super().generate_fixed_circle_crossing_human(human_idx=human_idx, static=static)
         human.recent_speeds = deque(maxlen=self.human_timeout_len*2)
         human.recent_speeds.append(norm([human.vx, human.vy]))
         return human
@@ -216,20 +222,14 @@ class CrowdSim3DTbObs(CrowdSim3DTB):
 
         if self.config.env.use_vlm:
             # don't need to use when simulation 
-            '''
-            _, _, rgb, _, _ = self.get_camera_image()
-            
-            scene_type, activities = self.infer_scene_activity(np.asarray(rgb, dtype=np.uint8))
-            self.scene_prior = scene_type 
-            self.activities_vlm = {h.id: act for h, act in zip(visible_humans, activities)}
-            for h in visible_humans:                             # 给每个人挂属性
-                h.activity = self.activities_vlm.get(h.id, None)
-                self.set_activity_priorities(h)
-            '''
-            self.scene_prior = self.get_priority_vlm()
+
+            if self.config.env.test_in_pybullet:
+                scene_idx = self.scene_type
+            else:
+                scene_idx = self.get_priority_vlm()
 
             scene_map = {'corner':[1,0,0], 'corridor':[0,1,0], 'open_space':[0,0,1]}
-            ob['scene_prior']    = np.array([scene_map.get(self.scene_prior,[0,0,0])])
+            ob['scene_prior']    = np.array([scene_map.get(scene_idx,[0,0,0])])
             ob['activity_prior'] = activity_weights
 
         # update self.observed_human_ids
