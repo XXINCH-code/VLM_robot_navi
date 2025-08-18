@@ -1,56 +1,11 @@
-2025-08-09 09:58:04, INFO: robot FOV 2.000000
-2025-08-09 09:58:04, INFO: humans FOV 2.000000
-2025-08-09 09:58:04, INFO: Create other envs with new settings
-2025-08-09 09:58:04, INFO: Not randomize human's radius and preferred speed
-2025-08-09 09:58:04, INFO: Circle width: 4
-2025-08-09 09:58:04, INFO: robot FOV 6.283185
-2025-08-09 09:58:04, INFO: humans FOV 6.283185
-2025-08-09 09:58:08, INFO: Not randomize human's radius and preferred speed
-2025-08-09 09:58:08, INFO: Circle width: 4
-2025-08-09 09:58:08, INFO: robot FOV 6.283185
-2025-08-09 09:58:08, INFO: humans FOV 6.283185
-2025-08-09 09:58:10, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 09:58:50, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 09:59:10, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:00:59, INFO: Not randomize human's radius and preferred speed
-2025-08-09 10:00:59, INFO: Circle width: 4
-2025-08-09 10:00:59, INFO: robot FOV 6.283185
-2025-08-09 10:00:59, INFO: humans FOV 6.283185
-2025-08-09 10:01:01, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:01:06, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:01:09, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:01:13, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:01:31, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:02:23, INFO: Not randomize human's radius and preferred speed
-2025-08-09 10:02:23, INFO: Circle width: 4
-2025-08-09 10:02:23, INFO: robot FOV 6.283185
-2025-08-09 10:02:23, INFO: humans FOV 6.283185
-2025-08-09 10:03:30, INFO: Not randomize human's radius and preferred speed
-2025-08-09 10:03:30, INFO: Circle width: 4
-2025-08-09 10:03:30, INFO: robot FOV 6.283185
-2025-08-09 10:03:30, INFO: humans FOV 6.283185
-2025-08-09 10:03:31, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:03:34, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:04:04, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:04:07, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:05:02, INFO: Not randomize human's radius and preferred speed
-2025-08-09 10:05:02, INFO: Circle width: 4
-2025-08-09 10:05:02, INFO: robot FOV 6.283185
-2025-08-09 10:05:02, INFO: humans FOV 6.283185
-2025-08-09 10:05:03, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:05:37, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:05:50, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:06:25, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
-2025-08-09 10:07:42, INFO: Not randomize human's radius and preferred speed
-2025-08-09 10:07:42, INFO: Circle width: 4
-2025-08-09 10:07:42, INFO: robot FOV 6.283185
-2025-08-09 10:07:42, INFO: humans FOV 6.283185
-2025-08-09 10:07:42, INFO: TEST  has success rate: 0.40, collision rate: 0.60, timeout rate: 0.00, nav time: 22.25
-2025-08-09 10:07:42, INFO: collision rate with humans: 0.60, with obstacles: 0.00, with walls: 0.00, 
-2025-08-09 10:07:42, INFO: average intrusion ratio: 2.46 and average minimal distance during intrusions: 0.21
-2025-08-09 10:07:42, INFO: TEST  has average path length: 10.64
-2025-08-09 10:07:42, INFO: Collision cases: 1 2 3
-2025-08-09 10:07:42, INFO: Collision with Human cases: 1 2 3
-2025-08-09 10:07:42, INFO: Collision with Obstacle cases: 
-2025-08-09 10:07:42, INFO: Collision with Wall cases: 
-2025-08-09 10:07:42, INFO: Timeout cases: 
+2025-08-18 17:05:13, INFO: robot FOV 2.000000
+2025-08-18 17:05:13, INFO: humans FOV 2.000000
+2025-08-18 17:05:13, INFO: Create other envs with new settings
+2025-08-18 17:05:13, INFO: Not randomize human's radius and preferred speed
+2025-08-18 17:05:13, INFO: Circle width: 4
+2025-08-18 17:05:13, INFO: robot FOV 6.283185
+2025-08-18 17:05:13, INFO: humans FOV 6.283185
+2025-08-18 17:05:16, INFO: Not randomize human's radius and preferred speed
+2025-08-18 17:05:16, INFO: Circle width: 4
+2025-08-18 17:05:16, INFO: robot FOV 6.283185
+2025-08-18 17:05:16, INFO: humans FOV 6.283185
