@@ -4,7 +4,7 @@
 
 <p>
   <img src="https://media2.giphy.com/media/duqAZvckQ8XdKN9nYh/giphy.gif" width="300" />
-  <img src="gif/yolo_corridor_comment.png" width="400" />
+  <img src="gif/yolo_corridor_comment.png" width="450" />
 </p>
 
 
