@@ -3,7 +3,7 @@
 ## Overview
 
 <img src="https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExdXBjcXAxOXd0bXo5emF4ZWhpcjNicGd6Y250bGE0YXp3cWx6NXZzbiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/duqAZvckQ8XdKN9nYh/giphy.gif" width="300" />
-<img src="gif/yolo_corridor_comment.png" width="500" />
+<img src="gif/yolo_corridor_comment.png" width="400" />
 
 
 
