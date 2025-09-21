@@ -76,6 +76,9 @@ def evaluate(actor_critic, eval_envs, num_processes, device, config, logging, te
 
     t = 0
 
+    # 初始化记录危险的计数
+    danger_cases = 0 
+
     obs = eval_envs.reset()
 
     # the main testing loop
@@ -91,6 +94,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, config, logging, te
         too_close = 0.
 
         last_pos = obs['robot_node'][0, 0, 0:2].cpu().numpy()  # robot px, py
+        danger_occurred = False  # initialize danger occurred flag
 
         while not done:
             stepCounter = stepCounter + 1
@@ -121,6 +125,9 @@ def evaluate(actor_critic, eval_envs, num_processes, device, config, logging, te
             rewards.append(rew)
 
             if isinstance(infos[0]['info'], Danger):
+                if not danger_occurred:  # if danger has not occurred in this episode
+                    danger_cases += 1
+                    danger_occurred = True  # mark that danger has occurred in this episode
                 too_close = too_close + 1
                 min_dist.append(infos[0]['info'].min_dist)
 
@@ -186,6 +193,7 @@ def evaluate(actor_critic, eval_envs, num_processes, device, config, logging, te
     collision_human_rate = collision_human / test_size
     collision_obs_rate = collision_obs / test_size
     collision_wall_rate = collision_wall / test_size
+    discomfort_ratios = danger_cases / test_size
     print(success, collision, timeout)
     assert success + collision + timeout == test_size
     avg_nav_time = sum(success_times) / len(
@@ -194,9 +202,9 @@ def evaluate(actor_critic, eval_envs, num_processes, device, config, logging, te
     extra_info = ''
     phase = 'test'
     logging.info(
-        '{:<5} {}has success rate: {:.2f}, collision rate: {:.2f}, timeout rate: {:.2f}, '
+        '{:<5} {}has success rate: {:.2f}, collision rate: {:.2f}, discomfort ratio: {:.2f}, timeout rate: {:.2f}, '
         'nav time: {:.2f}'.
-        format(phase.upper(), extra_info, success_rate, collision_rate, timeout_rate, avg_nav_time))
+        format(phase.upper(), extra_info, success_rate, collision_rate, discomfort_ratios, timeout_rate, avg_nav_time))
     logging.info(
         'collision rate with humans: {:.2f}, with obstacles: {:.2f}, with walls: {:.2f}, '.
         format(collision_human_rate, collision_obs_rate, collision_wall_rate))
