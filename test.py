@@ -31,12 +31,11 @@ def main():
 	parser.add_argument('--dwa', default=False, action='store_true')
 	# use cpu if do not have GPU or CUDA version does not match
 	# No need to change if the computer has a GPU
-	# otherwise: set to True
+	# otherwise: set to Truev `	`````  
 	parser.add_argument('--cpu', default=False, action='store_true')
 	# model weight file you want to test
-	parser.add_argument('--test_model', type=str, default='54000.pt')
-	#parser.add_argument('--test_model', type=str, default='208200.pt')
-	#parser.add_argument('--test_model', type=str, default='137400.pt')
+	#parser.add_argument('--test_model', type=str, default='56000.pt')
+	parser.add_argument('--test_model', type=str, default='65400.pt')
 
 	# display lidar rays or not
 	parser.add_argument('--visualize_lidar_rays', default=False, action='store_true')
@@ -52,8 +51,8 @@ def main():
 	# import config class from saved directory
 	# if not found, import from the default directory
 	try:
-		model_dir_string = model_dir_temp.replace('/', '.') + '.configs.config_newenv'
-		#model_dir_string = model_dir_temp.replace('/', '.') + '.configs.config'
+		#model_dir_string = model_dir_temp.replace('/', '.') + '.configs.config_newenv'
+		model_dir_string = model_dir_temp.replace('/', '.') + '.configs.config_randEnv'
 		model_arguments = import_module(model_dir_string)
 		Config = getattr(model_arguments, 'Config')
 	except:
@@ -74,7 +73,7 @@ def main():
 		# don't render because it will result in a different testing result
 		test_args.visualize = False
 		# only test for 20 episodes
-		config.env.test_size = 5
+		config.env.test_size = 1
 
 	# -------logging settings-------
 	# print test result in log file
