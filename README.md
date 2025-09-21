@@ -2,6 +2,9 @@
 
 ## Overview
 
+![Robot Navigation Demo](gifs/navigation_demo.gif)
+
+
 VISTA (Visual-Informed Socially Aware Trajectory Agent) is a novel social robot navigation framework that enhances the decision-making ability of robots in dynamic and human-centered environments. Combining Vision-Language Models (VLM) with Deep Reinforcement Learning (DRL), VISTA allows robots to adjust their navigation strategies based on human activities and environmental types.
 
 This repository contains the code for the VISTA framework, including implementation details, model training, and simulation results. The method is validated using simulation experiments in PyBullet and real-world experiments with a TurtleBot3 platform and a RealSense D405 camera.
