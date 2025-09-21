@@ -9,10 +9,10 @@ from crowd_sim.envs import *
 if __name__ == '__main__':
     display = True
 
-    #from crowd_nav.configs.config import Config
     from crowd_nav.configs.config_randEnv import Config
+    #from crowd_nav.configs.config_unchangedEnv import Config
     #from trained_models.ours_RH_HH_hallwayEnv.configs.config import Config as Config_randEnv
-    #config = Config()
+
     config = Config()
 
     # Enable rendering if display mode is active and 'sim' attribute exists in config
@@ -29,7 +29,7 @@ if __name__ == '__main__':
 
     # Set up visualization if display mode is active and environment type is CrowdSimVarNum
     if display and type(env) == CrowdSimVarNum:
-        fig, ax = plt.subplots(figsize=(9, 9))  # Create figure for plotting environment state
+        fig, ax = plt.subplots(figsize=(9, 9))  # Create figure for plotting environmentclea state
         ax.set_xlim(-10, 10)                    # Define plot boundaries
         ax.set_ylim(-10, 10)
         ax.set_xlabel('x(m)', fontsize=16)      # Label axes
