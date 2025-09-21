@@ -1,17 +1,5 @@
 import numpy as np
 
-'''
-Configuration Sections:
-- Environment (`env`): Defines parameters for the environment type, scenario, and time limits.
-- Robot (`robot`): Sets up the robot's physical and behavioral characteristics, such as visibility and policy.
-- Human (`humans`): Configures human behavior, visibility, and policies.
-- Reward (`reward`): Establishes the reward structure, including success, collision, and discomfort penalties.
-- Sensors (`lidar`, `camera`): Specifies configurations for the robot's lidar and camera systems.
-- Training (`training`): Contains parameters for training setups, including PPO hyperparameters, logging, and resumption options.
-- Planning (`planner`): Provides configuration for the A* planner and waypoint sampling, particularly for navigation paths.
-'''
-
-
 class BaseConfig(object):
     def __init__(self):
         pass
@@ -39,9 +27,10 @@ class Config(object):
 
     # whether to use VLM for navigation, if "real", the robot will detect env and human activity by vlm
     env.use_vlm = True  # False means sim; True means real
-    env.use_activity_weight = True  # whether to use human activity weight in attention mechanism
-    env.random_env = True  # whether to use random environment, if False, use fixed environment
-    env.test_in_pybullet = False  # whether to test the model with VLM in pybullet or not, if True, use VLM to  analyse images
+    env.random_env = False  # whether to use random environment, if False, use fixed environment
+    env.test_in_pybullet = True  # whether to test the model with VLM in pybullet or not, if True, use VLM to  analyse images
+    env.test_with_static = True  # whether to test the model with static humans or not
+    env.test_mode = True  # if True, use the fixed correlated routes for humans in test.py
     env.human_activity_beta = 2  # beta value for human activity weight, used in attention mechanism
     env.hard_block_th = 1.0       # 低于该权重的人的注意力在 softmax 前直接屏蔽
     env.activity_gain_cap = 1.8
@@ -79,11 +68,11 @@ class Config(object):
     reward.collision_penalty = -20
     # discomfort distance
     reward.discomfort_dist = 0.3
-    reward.discomfort_penalty_factor = 15
+    reward.discomfort_penalty_factor = 12
     # dynamic navigation reward (diff envs)
     reward.keep_right_coeff = 0.1 # original 0.3
     # penalty for robot speed in corner
-    reward.corner_speed_penalty = 0.2  # original 0.2
+    reward.corner_speed_penalty = 0.3  # original 0.2
     # reduce the potential reward for hierarchical policy with A*
     if 'Hie' in env.env_name:
         reward.potential_reward_factor = 1
@@ -114,9 +103,7 @@ class Config(object):
     sim.human_num = 7
     # the range of human_num is human_num-human_num_range~human_num+human_num_range
     sim.human_num_range = 2
-    # number of static humans
-    sim.static_human_num = 1
-    sim.static_human_range = 1
+
     # actual human num is in [human_num-human_num_range, human_num+human_num_range]
     # warning: may have problems if human_num - human_num_range < observed_human_num
 
@@ -228,7 +215,7 @@ class Config(object):
     lidar = BaseConfig()
     lidar.add_lidar = True
     # angular resolution (offset angle between neighboring rays) in degrees
-    lidar.angular_res = 2  # todo: 1
+    lidar.angular_res = 1  # todo: 1
     # lidar range: see robot.sensor_range
     # the height of the lidar mounting point from floor
     lidar.height = 0.5
@@ -412,10 +399,10 @@ class Config(object):
     training.output_dir = 'data/ours_RH_HH_cornerEnv' 
     # resume training from an existing checkpoint or not
     # none: train RL from scratch, rl: load a RL weight
-    training.resume = 'rl'
+    training.resume = 'none'
     # if resume != 'none', load from the following checkpoint
     #training.load_path = 'trained_models/ours_HH_RH_randEnv/checkpoints/237800.pt'
-    training.load_path = 'data/ours_RH_HH_cornerEnv/checkpoints/51000.pt'
+    training.load_path = 'data/ours_RH_HH_cornerEnv/checkpoints/12800.pt'
     #training.load_path = 'data/ours_RH_HH_cornerEnv_with_staticHuman/checkpoints/18000.pt'
     training.overwrite = True  # whether to overwrite the output directory in training
     training.num_threads = 1  # number of threads used for intraop parallelism on CPU
@@ -460,15 +447,38 @@ class Config(object):
         if self.env.random_env:
             # if use_vlm, randomly choose between corner and corridor
             # plan to add simple corner and simple corridor
-            #self.env.csl_workspace_type = np.random.choice(['corner', 'corridor'])
-            self.env.csl_workspace_type = np.random.choice(['simple_corner', 'simple_corridor'])
+            self.env.csl_workspace_type = 'open_space'
+            #self.env.csl_workspace_type = np.random.choice(['', 'simple_corridor'])#, 'open_space'])
         else:
-            self.env.csl_workspace_type = 'corner'
+            self.env.csl_workspace_type = 'simple_corner'
+            #self.env.csl_workspace_type = 'open_space'
+            #self.env.csl_workspace_type = 'simple_corridor'
         
         # Update fixed_obs based on the new csl_workspace_type
+        self.update_static_human_num()
         self.update_fixed_obs()
         self.update_arena_size()
         self.update_robot_regions()
+
+    def update_static_human_num(self):
+        if self.env.random_env:
+            self.sim.static_human_num = 1
+            self.sim.static_human_range = 1
+        elif self.env.test_with_static:
+            self.sim.static_human_num = 2
+            self.sim.static_human_range = 0
+        elif not self.env.test_with_static and self.env.csl_workspace_type == 'open_space':
+            self.sim.static_human_num = 0
+            self.sim.static_human_range = 0
+        elif self.env.csl_workspace_type == 'simple_corner' and self.env.test_mode:
+            self.sim.static_human_num = 2
+            self.sim.static_human_range = 0
+        elif self.env.csl_workspace_type == 'simple_corridor' and self.env.test_mode:
+            self.sim.static_human_num = 0
+            self.sim.static_human_range = 0
+        else:
+            self.sim.static_human_num = 2
+            self.sim.static_human_range = 0
 
     def update_arena_size(self):
         if self.env.mode == 'sim':
@@ -482,6 +492,8 @@ class Config(object):
             elif self.env.csl_workspace_type == 'simple_corner':
                 self.sim.arena_size = 10
             elif self.env.csl_workspace_type == 'simple_corridor':
+                self.sim.arena_size = 10
+            elif self.env.csl_workspace_type == 'open_space':
                 self.sim.arena_size = 10
 
     def update_robot_regions(self):
@@ -513,11 +525,18 @@ class Config(object):
                             }
             # short-distance navigation
             self.robot.routes = [[1, 3]]
+        elif self.env.csl_workspace_type == 'open_space':
+            self.robot.regions = {1: np.array([-0.2, 0.2, -0.3, 0.3]),
+                            2: np.array([-0.3, 0.3, 5.5, 6]),
+                            3: np.array([-0.25, 0.25, 6, 6.5]),
+                            }
+            # short-distance navigation
+            self.robot.routes = [[1, 3]]
 
     def update_fixed_obs(self):
         """Update the fixed_obs configuration based on csl_workspace_type."""
         # r, g, b, alpha
-        # 人类的默认颜色设置为绿色（第二个）
+        # The default color for humans is set to green (the second one)
         self.human_flow.colors = [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1], [1, 0, 1, 1], [0, 1, 1, 1], [0, 0, 0, 1],
                             [1, 0, 0.5, 1], [0, 1, 0.5, 1], [0, 0.5, 1, 1], [0.5, 1, 0, 1], [0.5, 0, 1, 1],
                             [1, 0.5, 0.5, 1],[0.5, 1, 0.5, 1], [0.5, 0.5, 1, 1], [0.25, 0, 1, 1], [0, 1, 0.25, 1], [0.25, 0.25, 0, 1], [1, 0.25, 0, 1]]
@@ -543,7 +562,6 @@ class Config(object):
                 self.fixed_obs.sizes = np.array([[10, 1300], [800, 10],
                                             [700, 360], [700, 360], [140, 250],
                                             [1100, 250], 
-                                            # 两个桌子
                                             [450, 200], [450, 200],
                                             # vertical dividers that seperate desks and hallway
                                             [divider_width, 360], [divider_width, 360],
@@ -683,34 +701,29 @@ class Config(object):
                     [[0, 1, 1.5, 2, 4, 6, 7], [7, 6, 5, 3, 1.5]],
                 ]
 
-            elif self.env.csl_workspace_type == 'square':
+            elif self.env.csl_workspace_type == 'open_space':
                 #fixed_obs.sizes = np.array([[10, 500]]) / 100.
-                self.fixed_obs.sizes = np.array([[10, 500], [600, 10], [10, 300],
-                                            [200, 300], [90, 400], [190, 100],
+                self.fixed_obs.sizes = np.array([[100, 1200], [1400, 100],
+                                            [100, 1200], [1400, 100],
                                             ]) / 100.
                 # [x, y] coordinates of lower left corners of all obstacles
                 #fixed_obs.positions_lower_left = np.array([[-300, -100]]) / 100.
-                self.fixed_obs.positions_lower_left = np.array([[-300, -100], [-300, 400], [290, 100],
-                                                        [300, 100], [-300, -100], [-300, 300]
+                self.fixed_obs.positions_lower_left = np.array([[600, -100], [-700, -200],
+                                                        [-700, -100], [-700, 1100]
                                                         ]) / 100.
                 self.fixed_obs.shapes = np.array([1] * 6)
-
                 # define human routes based on map
-                self.human_flow.static_regions = np.array([[310, 570, -100, 100], [310, 570, 350, 600],
-                                                    [-80, 150, 150,300], [-80, 150, 500, 600]
+                self.human_flow.static_regions = np.array([[1000, 1300, -1100, -1000], 
+                                                    [1400, 1700, -1300, -1200], 
                                                     ]) / 100.
                 # will be triggered ONLY IF sim.static_obs = True and sim.random_obs = False
                 # key: region number, value: [x_low, x_high, y_low, y_high] of the rectangular shaped region
-                self.human_flow.regions = {1: np.array([300, 400, -220, -100]) / 100.,
-                                    2: np.array([-80, 200, -250, -100]) / 100.,
-                                    2.5: np.array([0, 100, 0, 100]) / 100.,
-                                    3: np.array([-80, 125, 300, 500]) / 100.,
-                                    4: np.array([-80, 125, 600, 800]) / 100.,
-                                    4.5: np.array([0, 125, 875, 1000]) / 100.,
-                                    5: np.array([300, 500, 890, 950]) / 100.,
-                                    6: np.array([-400, -200, 900, 1010]) / 100.,
-                                    7: np.array([-700, -600, 370, 470]) / 100.,
-                                    7.5: np.array([-330, -200, 370, 430]) / 100.,
+                self.human_flow.regions = {1: np.array([62, 65, 520, 530]) / 100.,
+                                    1.5: np.array([-65, -62, 520, 530]) / 100.,
+                                    2: np.array([62, 65, 0, 10]) / 100.,
+                                    2.5: np.array([-65, -62, 0, 10]) / 100.,
+                                    3: np.array([-80, 200, 2500, 2600]) / 100.,
+                                    4: np.array([-80, 125, 3000, 3500]) / 100.,
                                     }
 
                 # the route of each human is chosen independently (less controlled), or they are correlated (more controlled)
@@ -720,9 +733,13 @@ class Config(object):
 
                                     ]
 
-                self.human_flow.correlated_routes = [
-
-                ]
+                if self.env.test_with_static:
+                    self.human_flow.correlated_routes = [
+                        [[3, 4]]]
+                else:
+                    self.human_flow.correlated_routes = [
+                        # human goes right,towards robot
+                        [[1, 2], [1.5, 2.5]]]
 
             elif self.env.csl_workspace_type == 'simple_corner':
                 self.fixed_obs.sizes = np.array([
@@ -745,10 +762,12 @@ class Config(object):
                 # will be triggered ONLY IF sim.static_obs = True and sim.random_obs = False
                 # key: region number, value: [x_low, x_high, y_low, y_high] of the rectangular shaped region
                 self.human_flow.regions = {0: np.array([-470, -400, 400, 500]) / 100.,
-                                    1: np.array([-350, -300, 450, 530]) / 100.,
+                                    1: np.array([-300, -250, 450, 530]) / 100.,
                                     1.5: np.array([-50, 50, 400, 500]) / 100.,
-                                    2: np.array([-50, 100, -50, 50]) / 100.,
-                                    3: np.array([100, 130, -300, -270]) / 100.,
+                                    2: np.array([-50, 0, -50, 50]) / 100.,
+                                    2.5: np.array([100, 130, -300, -270]) / 100.,
+                                    3: np.array([-80, 200, 2500, 2600]) / 100.,
+                                    4: np.array([-80, 125, 3000, 3500]) / 100.,
                                     }
                 # the route of each human is chosen independently (less controlled), or they are correlated (more controlled)
                 self.human_flow.route_type = 'correlated'
@@ -757,16 +776,22 @@ class Config(object):
                                     [1, 1.5, 2],
                                     [3, 1.5, 1]
                                     ]
-                self.human_flow.correlated_routes = [
-                    # human goes right,towards robot
-                    [[0, 0, 0, 0, 0, 0, 1, 2], [1, 2]],
-                    # human goes left, then right
-                    [[1, 2],[3, 1.5, 1]],
-                    [[0, 0, 0, 0, 0, 1, 2]],
-                    [[1,2]],
-                ]
+                if not self.env.test_mode:
+                    self.human_flow.correlated_routes = [
+                        # human goes right,towards robot
+                        [[0, 0, 0, 0, 0, 0, 1, 2], [1, 2]],
+                        # human goes left, then right
+                        [[1, 2],[2.5, 1.5, 1]],
+                        [[0, 0, 0, 0, 0, 1, 2]],
+                        [[1,2]]]
+                elif self.env.test_with_static:
+                    self.human_flow.correlated_routes = [
+                        [[3, 4]]]
+                else:
+                    self.human_flow.correlated_routes = [
+                        [[0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2], [1, 2]]]
 
-            # static area还没有设置，还有huamn flow
+            # The static area has not been set yet, and there is still human flow
             elif self.env.csl_workspace_type == 'simple_corridor':
                 # change the number of static humans
                 #self.sim.static_human_num = 1
@@ -796,6 +821,8 @@ class Config(object):
                                     3: np.array([-80, -20, 550, 650]) / 100.,
                                     3.5: np.array([20, 80, 550, 650]) / 100.,
                                     4: np.array([-50, 25, -250, -300]) / 100.,
+                                    5: np.array([-80, 200, 2500, 2600]) / 100.,
+                                    6: np.array([-80, 125, 3000, 3500]) / 100.,
                                     }
 
                 # the route of each human is chosen independently (less controlled), or they are correlated (more controlled)
@@ -813,22 +840,30 @@ class Config(object):
                                     # human goes right and then left
                                     [1, 2, 3.5, 4],
                                     ]
-                self.human_flow.correlated_routes = [
-                    # human goes right,towards robot
-                    [[0, 2, 3, 4], [1, 2, 3, 4]],
-                    [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4], [1, 2, 3, 4]],
-                    # human goes left, then right
-                    [[0, 2.5, 3.5, 4], [1, 2.5, 3.5, 4]],
-                    [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.5, 3.5, 4], [1, 2.5, 3.5, 4]],
-                    [[1, 2.5, 3.5, 4], [0, 2, 3, 4]],
-                    [[1, 2.5, 3.5, 4], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4]],
-
-                    [[0, 2, 3, 4]],
-                    [[0, 2.5, 3.5, 4]],
-                    [[0, 2.5, 3, 4]],
-                    [[0, 2, 3.5, 4]],
-                ]
                 
+                if not self.env.test_mode:
+                    self.human_flow.correlated_routes = [
+                        # human goes right,towards robot
+                        [[0, 2, 3, 4], [1, 2, 3, 4]],
+                        [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4], [1, 2, 3, 4]],
+                        # human goes left, then right
+                        [[0, 2.5, 3.5, 4], [1, 2.5, 3.5, 4]],
+                        [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2.5, 3.5, 4], [1, 2.5, 3.5, 4]],
+                        [[1, 2.5, 3.5, 4], [0, 2, 3, 4]],
+                        [[1, 2.5, 3.5, 4], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4]],
+
+                        [[0, 2, 3, 4]],
+                        [[0, 2.5, 3.5, 4]],
+                        [[0, 2.5, 3, 4]],
+                        [[0, 2, 3.5, 4]]]
+                elif self.env.test_with_static:
+                    self.human_flow.correlated_routes = [
+                        [[5, 6]]]
+                else:
+                    self.human_flow.correlated_routes = [
+                        [[1, 2.5, 3.5, 4], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 4]]
+                    ]
+
             else:
                 raise ValueError("Unknown csl_workspace_type")
             assert len(self.fixed_obs.sizes) == len(self.fixed_obs.positions_lower_left)
