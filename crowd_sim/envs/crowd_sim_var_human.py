@@ -146,7 +146,7 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
         # generate the robot
         self.generate_robot()
         
-        # 因为现在每次训练先随机env，因此也需要完全随机human routine的选取
+        # Because each training now starts with a random env, a completely random human routine selection is also required
         np.random.seed()
 
         # generate humans
@@ -167,7 +167,7 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
         self.static_human_num = np.random.randint(low=self.config.sim.static_human_num - self.config.sim.static_human_range,
                                            high=self.config.sim.static_human_num + self.config.sim.static_human_range + 1)
 
-        if self.config.env.random_env: self.generate_random_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
+        if not self.config.env.test_mode: self.generate_random_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
         else: self.generate_fixed_human_position(human_num=self.dynanmic_human_num, static_human_num = self.static_human_num)
         
         self.human_num = self.dynanmic_human_num + self.static_human_num
@@ -201,22 +201,34 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
             # designed human flow
             if self.config.env.scenario == 'csl_workspace':
                 if static and self.config.env.csl_workspace_type == 'simple_corner':
+                    '''
                     if human_idx == 0:
                         px = gx = 1.2
-                        py = gy = 2.5
+                        py = gy = 2.5#2
                     elif human_idx == 1:
-                        px = gx = -0.3
-                        py = gy = 5.1
+                        px = gx = 0.8#-3
+                        py = gy = 5.1#3.9
                     elif human_idx == 2:
                         px = gx = 0.8
                         py = gy = 5
+                    '''
+                    if human_idx == 0:
+                        px = gx = -0.7
+                        py = gy = 2.5
+                    elif human_idx == 1:
+                        px = gx = -0.3
+                        py = gy = 4.8
+                    elif human_idx == 2:
+                        px = gx = 0.8
+                        py = gy = 5
+                    
                 elif static and self.config.env.csl_workspace_type == 'simple_corridor':
                     if human_idx == 0:
                         px = gx = 0.7
                         py = gy = -2.5
                     elif human_idx == 1:
                         px = gx = -0.7
-                        py = gy = 1.7
+                        py = gy = 2.5
                     elif human_idx == 2:
                         px = gx = -0.6
                         py = gy = 2.6
@@ -337,12 +349,6 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
             # designed human flow
             if self.config.env.scenario == 'csl_workspace':
                 if static:
-                    '''
-                    if self.config.env.mode == 'sim2real' and self.static_human_in_hallway:
-                        region_idx = np.random.choice(len(self.config.human_flow.static_regions)-1)
-                    else:
-                        region_idx = np.random.choice(len(self.config.human_flow.static_regions))
-                    '''
                     # region_idx = np.random.choice(len(self.config.human_flow.static_regions))
                     px = gx = np.random.uniform(self.config.human_flow.static_regions[region_idx, 0],
                                                 self.config.human_flow.static_regions[region_idx, 1])
@@ -596,7 +602,6 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
             # adjust the reward based on FPS
             # print(dmin)
             done = False
-            diffs = []
             reward = 0
             dmin = float('inf')
             dmin_diff = 0
@@ -604,15 +609,17 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
             for human, dist in close_humans:
                 margin = human.discomfort_dist * human.priority_coef
                 diff = dist - margin
-                diffs.append(diff)
-                #reward += diff * (0.05 * self.discomfort_penalty_factor) * self.time_step
+    
                 if dist < dmin:
                     dmin = dist
                     dmin_diff = diff
             if dmin < float('inf'):
                 reward += dmin_diff * self.discomfort_penalty_factor * self.time_step
                 reward = min(0, reward)
-            min_danger_dist = min([dist for _, dist in close_humans])
+            if close_humans:
+                min_danger_dist = min([dist for _, dist in close_humans])
+            else:
+                min_danger_dist = float('inf')  
             episode_info = Danger(min_danger_dist)
 
         else:
@@ -628,12 +635,12 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
             scene_idx = self.get_priority_vlm()
 
         if scene_idx == 'simple_corridor':  # corridor
-            # 鼓励靠右行驶：机器人 y 越偏右（y 越负），reward 越高
+            # Encourage driving on the right: The more to the right the robot's y is (the more negative y is), the higher the reward
             x = self.robot.px
             reward += self.config.reward.keep_right_coeff * (x) * self.time_step
 
-        elif scene_idx == 'simple_corner':  # cornerv
-            # 拐角前放慢速度：速度越大，越惩罚
+        elif scene_idx == 'simple_corner':  # corner
+            # Slow down before the corner: The faster the speed, the greater the punishment
             speed = np.linalg.norm(self.robot.v)
             # 0.2 is the proper speed to cross the corner
             reward += self.config.reward.corner_speed_penalty * (0.2-speed) * self.time_step
@@ -641,8 +648,6 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
         # if the robot is near collision/arrival, it should be able to turn a large angle
         if self.robot.kinematics in ['unicycle', 'turtlebot']:
             if self.robot.kinematics == 'unicycle':
-                # if action.r is w, factor = -0.02 if w in [-1.5, 1.5], factor = -0.045 if w in [-1, 1];
-                # if action.r is delta theta, factor = -2 if r in [-0.15, 0.15], factor = -4.5 if r in [-0.1, 0.1]
                 w = action.r
                 v = action.v
             else:
@@ -667,7 +672,7 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
         # print(reward)
         return reward, done, episode_info
 
-
+    '''
     def reset(self, phase='train', test_case=None):
         """
         Set px, py, gx, gy, vx, vy, theta for robot and humans
@@ -806,7 +811,7 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
                     self.humans[i].id = i
 
         return ob, reward, done, info
-
+        
     def change_human_num_periodically(self):
         if self.human_num_range > 0 and self.global_time % 5 == 0:
             # remove humans
@@ -972,3 +977,4 @@ class CrowdSimVarNum(VLMPerceptionMixin, CrowdSim):
             # initially use add_artist and draw_artist later on
         for t in ax.texts:
             t.set_visible(False)
+    '''

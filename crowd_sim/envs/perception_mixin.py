@@ -5,9 +5,9 @@ from typing import Optional
 # crowd_sim/base/perception_mixin.py
 class VLMPerceptionMixin:
     def __init__(self):
-        # 上一帧可见的 human id 集合
+        # The set of human IDs visible in the previous frame
         self._prev_visible_ids: set[int] = set()
-        # 缓存：id -> activity
+        # Cache: id -> activity
         self.human_activity_cache: dict[int, str] = {}
         self.scene_type: str | None = None
 
@@ -35,6 +35,8 @@ class VLMPerceptionMixin:
         curr_ids = set(curr_ids)
         # find new ids in robot FOV
         new_ids = curr_ids - self._prev_visible_ids
+        #print(f"Current IDs: {curr_ids}")
+        #print(f"Previous IDs: {self._prev_visible_ids}")
 
         # used to check if any previous human's activity is not detected
         for human in self.humans:
@@ -42,13 +44,15 @@ class VLMPerceptionMixin:
             if closest_points:
                 # The closest points are typically in closest_points[0], check its distance
                 dist = closest_points[0][8]
-            if human.uid in self._prev_visible_ids and human.uid not in curr_ids:
+            if human.uid in self._prev_visible_ids and human.uid in curr_ids:
                 if human.detected_activity is None and dist < 2.5:
                     #self.human_activity_cache[human.uid] = self.humans[i].detected_activity
                     wrong_detected_ids = True
+            #print(f"Human {human.uid} distance to robot: {dist:.2f}, detected activity: {human.detected_activity}")
 
         if new_ids or wrong_detected_ids:
             hid_list, acts, scenes = self.query_vlm(rgb_image)
+            print(f"Human IDs from VLM: {hid_list}, activities: {acts}, scenes: {scenes}")
             for hid, act in zip(map(int, hid_list), acts):
                 self.human_activity_cache[hid] = act
                 for h in self.humans:

@@ -237,7 +237,7 @@ class CrowdSim(gym.Env):
             }
         ]
         #prompt_text = "Suppose you are a wheeled robot performing social navigation tasks in a simulation environment. All green cylinders in the picture are humans. Please judge the current human activity and the robot's current environment based on the image I uploaded. Please select one output from ['walking', 'carrying', 'static', 'talking'] and ['simple_corner', 'simple_corridor'] respectively. Requirement: Only output the judgment content, do not output redundant content, and do not explain why. Output format: human_id, human activity, env, give all the info of detected human in this format"
-        prompt_text = "Suppose you are a wheeled robot performing social navigation tasks in a simulation environment. All green cylinders in the picture are humans. Please judge the current human activity and the robot's current environment based on the image I uploaded. Please select one output from ['walking', 'carrying', 'static', 'talking'] and ['simple_corner', 'simple_corridor'] respectively. Requirement: Only output the judgment content, no explain. Output format: 'id, human activity, env'. Give all the info of detected human in this format"
+        prompt_text = "Suppose you are a wheeled robot performing social navigation tasks in a simulation environment. All green cylinders in the picture are humans. Please judge the current human activity and the robot's current environment based on the image I uploaded. Please select one output from ['walking', 'carrying', 'static', 'talking'] and ['simple_corner', 'simple_corridor', 'open_space'] respectively. Requirement: Only output the judgment content, no explain. Output format: 'id, human activity, env'. Give all the info of detected human in this format"
         messages = [
             {"role": "user", "content": [*image_payloads, {"type": "text", "text": prompt_text}]}
         ]
@@ -302,26 +302,26 @@ class CrowdSim(gym.Env):
         # Adjust discomfort distance based on activity
         
         # if test_in_pybullet is False, use this part
-        
+        '''
         if human.activity == 'static':
             human.v_max = 0.0  
-            human.discomfort_dist = 0.3
+            human.discomfort_dist = 0.25
             human.priority_coef = 0.8
         elif human.activity == 'talking':
             human.v_max = 0.0
             human.discomfort_dist = 0.4
-            human.priority_coef = 1.75 # original 1.5
+            human.priority_coef = 1.8 # original 1.5
         elif human.activity == 'walking':
             if self.config.env.csl_workspace_type == 'open_space':
                 human.v_max = 0.5
             else:
-                human.v_max = 0.8
-            human.discomfort_dist = 0.4
-            human.priority_coef = 1.0
+                human.v_max = 1.0
+            human.discomfort_dist = 0.3
+            human.priority_coef = 1.0 # original 1.0
         elif human.activity == 'carrying':
             human.v_max = 0.5
             human.discomfort_dist = 0.5
-            human.priority_coef = 1.5 # original 1.25
+            human.priority_coef = 2 # original 1.25
         '''
         # this part is for sim2real
         if human.detected_activity == 'static':
@@ -331,12 +331,12 @@ class CrowdSim(gym.Env):
             human.discomfort_dist = 0.5
             human.priority_coef = 1.0
         elif human.detected_activity == 'walking':
-            human.discomfort_dist = 0.5
+            human.discomfort_dist = 0.4
             human.priority_coef = 1.5
         elif human.detected_activity == 'carrying':
-            human.discomfort_dist = 0.6
+            human.discomfort_dist = 0.5
             human.priority_coef = 1.25
-        '''
+        
         
         
     def generate_fixed_human_position(self, human_num, static_human_num=0):
@@ -356,14 +356,14 @@ class CrowdSim(gym.Env):
         for i in range(static_human_num):
             static_human = self.generate_fixed_circle_crossing_human(human_idx=i, static=True)
             static_human.isObstacle = True
-            if not self.config.env.random_env and self.config.env.csl_workspace_type == 'open_space':
+            if self.config.env.csl_workspace_type == 'open_space':
                 if i == 0:
                     static_human.activity = 'static'
                     self.set_basic_attributes(static_human)
                 elif i == 1:
                     static_human.activity = 'talking'
                     self.set_basic_attributes(static_human)
-            elif not self.config.env.random_env and self.config.env.csl_workspace_type == 'simple_corner':
+            elif self.config.env.csl_workspace_type == 'simple_corner':
                 if i == 0:
                     static_human.activity = 'static'
                     self.set_basic_attributes(static_human)
@@ -371,6 +371,13 @@ class CrowdSim(gym.Env):
                     static_human.activity = 'talking'
                     self.set_basic_attributes(static_human)
                 elif i == 2:
+                    static_human.activity = 'talking'
+                    self.set_basic_attributes(static_human)
+            elif self.config.env.csl_workspace_type == 'simple_corridor':
+                if i == 0:
+                    static_human.activity = 'static'
+                    self.set_basic_attributes(static_human)
+                elif i == 1:
                     static_human.activity = 'talking'
                     self.set_basic_attributes(static_human)
             self.set_activity_priorities(static_human)
@@ -405,7 +412,7 @@ class CrowdSim(gym.Env):
         while count < static_human_num:
             idx = np.random.randint(region_num)
 
-            # 如果区域已被用过，则跳过（除非允许重复）
+            # If the region has already been used, it is skipped (unless duplicates are allowed)
             if idx in used_regions and static_human_num  <= region_num:
                 continue
             
@@ -728,10 +735,6 @@ class CrowdSim(gym.Env):
                 # print("------------\nsuccessfully found valid x: ", rand_cen_x, " y: ", rand_cen_y)
                 break
         self.circle_groups.append((group_radius, rand_cen_x, rand_cen_y))
-
-        # print("current groups:")
-        # for i in self.circle_groups:
-        #     print(i)
 
         arc = 2 * np.pi / circum_num
         for i in range(circum_num):
@@ -1147,102 +1150,6 @@ class CrowdSim(gym.Env):
                 collision = True
         return collision, dmin, 'human'
 
-
-    # find R(s, a), done or not, and episode information
-    def calc_reward(self, action):
-
-        # collision checking
-        collision, dmin, _ = self.collision_checker()
-
-        # check if reaching the goal
-        reaching_goal = norm(np.array(self.robot.get_position()) - np.array(self.robot.get_goal_position())) < self.goal_reach_dist
-
-        if self.global_time >= self.time_limit - 1:
-            reward = 0
-            done = True
-            episode_info = Timeout()
-        elif collision:
-            reward = self.collision_penalty
-            done = True
-            episode_info = Collision()
-        elif reaching_goal:
-            reward = self.success_reward
-            done = True
-            episode_info = ReachGoal()
-
-        elif dmin < self.discomfort_dist:
-            # only penalize agent for getting too close if it's visible
-            # adjust the reward based on FPS
-            # print(dmin)
-            reward = (dmin - self.discomfort_dist) * self.discomfort_penalty_factor * self.time_step
-            done = False
-            episode_info = Danger(dmin)
-
-        else:
-            # potential reward
-            potential_cur = np.linalg.norm(
-                np.array([self.robot.px, self.robot.py]) - np.array(self.robot.get_goal_position()))
-            if self.robot.kinematics == 'holonomic':
-                pot_factor = self.pot_factor
-            else:
-                pot_factor = self.pot_factor * 2
-            reward = pot_factor * (-abs(potential_cur) - self.potential)
-            self.potential = -abs(potential_cur)
-
-            done = False
-            episode_info = Nothing()
-
-
-        # if the robot is near collision/arrival, it should be able to turn a large angle
-        if self.robot.kinematics in ['unicycle', 'turtlebot']:
-            if self.robot.kinematics == 'unicycle':
-                # if action.r is w, factor = -0.02 if w in [-1.5, 1.5], factor = -0.045 if w in [-1, 1];
-                # if action.r is delta theta, factor = -2 if r in [-0.15, 0.15], factor = -4.5 if r in [-0.1, 0.1]
-                r_spin_coefficient = 4.5
-                r_back_coefficient = 0.5
-                w = action.r
-                v = action.v
-            else:
-                r_spin_coefficient = 0.05
-                r_back_coefficient = 0.
-                w = self.robot.w
-                v = self.robot.v
-            # add a rotational penalty
-
-            r_spin = -r_spin_coefficient * w**2
-
-            # add a penalty for going backwards
-            if v < 0:
-                r_back = -r_back_coefficient * abs(v)
-            else:
-                r_back = 0.
-            # print('original r:', reward, 'r spin:', r_spin, 'r_back:', r_back)
-            reward = reward + r_spin + r_back
-
-        # print(reward)
-        return reward, done, episode_info
-
-    # compute the observation as a flattened array
-    def generate_ob(self, reset):
-        visible_human_states, num_visible_humans, human_visibility = self.get_num_human_in_fov()
-        self.update_last_human_states(human_visibility, reset=reset)
-        if self.robot.policy.name in ['lstm_ppo', 'srnn']:
-            ob = [num_visible_humans]
-            # append robot's state
-            robotS = np.array(self.robot.get_full_state_list())
-            ob.extend(list(robotS))
-
-            ob.extend(list(np.ravel(self.last_human_states)))
-            ob = np.array(ob)
-
-        else: # for orca and sf
-            ob = self.last_human_states_obj()
-
-        if self.add_noise:
-            ob = self.apply_noise(ob)
-
-        return ob
-
     # get the actions for all humans at the current timestep
     def get_human_actions(self):
         # step all humans
@@ -1284,54 +1191,6 @@ class CrowdSim(gym.Env):
                 human_actions.append(human.act(ob))
         return human_actions
 
-    '''
-    # step function
-    def step(self, action, update=True):
-        """
-        Compute actions for all agents, detect collision, update environment and return (ob, reward, done, info)
-        """
-
-        # clip the action to obey robot's constraint
-        action = self.robot.policy.clip_action(action, self.robot.v_pref)
-
-        # step all humans
-        human_actions = self.get_human_actions()
-
-
-        # compute reward and episode info
-        reward, done, episode_info = self.calc_reward(action)
-
-
-        # apply action and update all agents
-        self.robot.step(action)
-        for i, human_action in enumerate(human_actions):
-            self.humans[i].step(human_action)
-        self.global_time += self.time_step # max episode length=time_limit/time_step
-        self.step_counter = self.step_counter + 1
-
-        ##### compute_ob goes here!!!!!
-        ob = self.generate_ob(reset=False)
-
-
-        if self.robot.policy.name in ['srnn']:
-            info={'info':episode_info}
-        else: # for orca and sf
-            info=episode_info
-
-        # Update all humans' goals randomly midway through episode
-        if self.random_goal_changing:
-            if self.global_time % 5 == 0:
-                self.update_human_goals_randomly()
-
-
-        # Update a specific human's goal once its reached its original goal
-        if self.end_goal_changing:
-            for human in self.humans:
-                if not human.isObstacle and human.v_pref != 0 and norm((human.gx - human.px, human.gy - human.py)) < human.radius:
-                    self.update_human_goal(human)
-
-        return ob, reward, done, info
-    '''
 
     # render function
     def render(self, mode='human'):

@@ -104,20 +104,20 @@ class CrowdSim3DTB(CrowdSimVarNum):
         self.render_img_w = config.camera.render_cam_img_width
         self.render_img_h = config.camera.render_cam_img_height
 
-        # 设置相机位置：假设相机在机器人上方
-        self.camera_position = [0, 0, 0.45]  # 机器人上方的相机
-        self.camera_target = [0, 0, 0.5]  # 相机朝向机器人中心
-        self.camera_up = [0, 1, 0]  # 上方向为y轴
+        # Set the camera position: Assume the camera is above the robot
+        self.camera_position = [0, 0, 0.45]  # The camera is above the robot
+        self.camera_target = [0, 0, 0.5]  # The camera is aimed at the center of the robot
+        self.camera_up = [0, 1, 0]  # The up direction is along the y-axis
 
         # read camera config
         # camera config for observations
-        self.camera_fov = 45
+        self.camera_fov = 90
         self.camera_height = config.camera.height
         self.aspect_ratio = 1.5
         self.near_plane = 0.1
         self.far_plane = 50
 
-        # 图像分辨率
+        # The image resolution
         self.width = config.camera.render_cam_img_width
         self.height = config.camera.render_cam_img_height
 
@@ -319,7 +319,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         """
         render the lidar point clouds as black dots on the rgb image
         """
-        # 已有：self.hit_positions 是 (N,3) 点云世界坐标
+        # Existing: self.hit_positions is (N,3) point cloud world coordinates
         # put the lidar points on the rgb image
         pix = self.project_points(self.hit_positions, view_matrix, projection_matrix,
                                 img_w=self.render_img_w, img_h=self.render_img_h)  # (N,2)
@@ -353,12 +353,6 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         return humans_in_view, num_humans_in_view, human_visibility
 
-    
-    
-    # -----------------------------------------------------------------
-    # Function block for generating observations
-    # -----------------------------------------------------------------
-    
 
     # -----------------------------------------------------------------
     # Function block for env reset and scenario creation
@@ -517,10 +511,9 @@ class CrowdSim3DTB(CrowdSimVarNum):
             self.physicsClientId = self._p._client
 
             assert self._p.isNumpyEnabled() == 1
-            # 这里调整由1-0
             p.setRealTimeSimulation(0)
 
-            # 调整摄像头视角
+            # Adjust the camera angle
             self._p.resetDebugVisualizerCamera(
                 cameraDistance=10,
                 cameraYaw=30,
@@ -542,7 +535,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
             # todo: add tb2 here
             # robot height must be < self.lidar.height!!!
-            yaw = math.radians(90)  # 转向 +Y 方向
+            yaw = math.radians(90)  # Turn to +Y direction
             quat = p.getQuaternionFromEuler([0, 0, yaw])
             self.robot.uid = p.loadURDF("crowd_sim/pybullet/media/turtlebot2/turtlebot.urdf", 
                                         [0, 0, 0], baseOrientation=quat)
@@ -594,7 +587,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
         else:
             self.first_epi = False
 
-        # 加载场景
+        # Load the scene
         # if it is the first run, build scene and setup simulation physics
         if self.scene is None:
             # this function will call episode_restart()->clean_everything() in
@@ -971,104 +964,122 @@ class CrowdSim3DTB(CrowdSimVarNum):
     
     def _social_filter_vw(self, v, w):
         """
-        输入: 期望的线/角速度 (v, w)
-        输出: 经过 VLM 驱动的社会规则裁剪后的 (v, w)
-        规则包含：
-        - Talking: 两人对话的“谈话线”形成软墙，禁止穿越
-        - Carrying: 搬运者前扇区禁抢道 -> 限制 v 上限
-        - Corridor: 走廊靠右微偏、禁止左侧超车
-        - Corner: 拐角区域限速
+        Input: Desired linear/angular velocity (v, w)
+        Output: (v, w) adjusted by VLM-driven social rules
+        Rules include:
+        - Talking: The "talking line" between two people forms a soft wall, prohibiting crossing
+        - Carrying: The front sector of a person carrying something is restricted, limiting the maximum v
+        - Corridor: Slight rightward bias in corridors, prohibiting overtaking on the left
+        - Corner: Speed limit in corner areas
         """
         if not (getattr(self.config.env, 'use_vlm', False)):
             return v, w
 
         # -----------------------------
-        # 0) Gather 当前机器人&人类状态
+        # 0) Gather the current robot & human states
         # -----------------------------
         rx, ry, rth = self.robot.px, self.robot.py, self.robot.theta
-        # 预测一步（小前瞻），使用 env 的控制周期
+        # One step ahead (small lookahead), using env's control period
         dt = float(self.config.env.time_step) if hasattr(self.config.env, 'time_step') else 0.1
-        # unicycle 模型简单前瞻
+        # unicycle model simple lookahead
         x_next = rx + v * np.cos(rth) * dt
         y_next = ry + v * np.sin(rth) * dt
 
         # -----------------------------
-        # 1) Corner 场景：限速（硬帽）
+        # 1) Corner scene: speed limit (hard cap)
         # -----------------------------
-        # 场景标签通常来自 VLM 识别，你已在 obs 里喂给网络；env 侧可读配置作为近似（random_env -> simple_corner/simple_corridor）
+        # Scene labels usually come from VLM recognition, which you have fed to the network in obs; env-side readable config serves as an approximation (random_env -> simple_corner/simple_corridor)
         scene = self.scene_type
         if scene == 'corner':
             v = np.clip(v, self.config.robot.v_min, min(self.config.robot.v_max,
-                    self.config.env.carrying_v_cap))  # 复用 carrying_v_cap 当作角落限速帽
+                    self.config.env.carrying_v_cap))  # Reuse carrying_v_cap as corner speed limit cap
 
         # -----------------------------
-        # 2) Carrying：前扇区禁抢道 -> 限制 v 上限
+        # 2) Carrying: The front sector of a person carrying something is restricted, limiting the maximum v
         # -----------------------------
-        v_cap_carry = self.config.env.carrying_v_cap  # 默认 0.35 m/s
+        v_cap_carry = self.config.env.carrying_v_cap  # Default 0.35 m/s
         sector_half_ang = np.deg2rad(30)
-        sector_radius =  getattr(self.config.reward, 'discomfort_dist', 0.3) + 0.3  # 在不适圈基础上放大
+        sector_radius =  getattr(self.config.reward, 'discomfort_dist', 0.3) + 0.3  # Amplify the discomfort zone
         for h in self.humans:
-            # 识别活动（优先使用 VLM 注入的属性；没有则以速度大小粗分）
+            # Identify activity (prefer VLM-injected attributes; if not, coarse-grain by speed)
             act = getattr(h, 'detected_activity', None)
             spd = np.hypot(h.vx, h.vy)
             is_carry = (act == 'Carrying') or (act is None and spd > 0.05 and getattr(h, 'isObstacle', False) is False and getattr(h, 'carrying_like', False) is True)
             if not is_carry:
                 continue
-            # 用速度方向近似朝向，若速度太小则跳过
+            # Use velocity direction to approximate the direction, and skip if the velocity is too small
             if spd < 0.05:
                 continue
             hth = np.arctan2(h.vy, h.vx)
-            # 机器人下一步是否落入其“前扇区”
+            # Whether the robot will fall into its "front sector" next
             relx, rely = x_next - h.px, y_next - h.py
             dist = np.hypot(relx, rely)
-            if dist < h.radius + h.discomfort_dist + 0.3:  # 在半径范围内
+            if dist < h.radius + h.discomfort_dist + 0.3:  # Within radius
                 bearing = np.arctan2(rely, relx)
                 angdiff = np.arctan2(np.sin(bearing - hth), np.cos(bearing - hth))
                 if np.abs(angdiff) <= sector_half_ang:
-                    v = min(v, v_cap_carry)  # 一刀切限速
+                    v = min(v, v_cap_carry) 
                     break
 
         # -----------------------------
-        # 3) Talking：谈话线不可穿越（线段相交判定）
+        # 3) Talking: The talking line cannot be crossed (line segment intersection judgment)
         # -----------------------------
-        wall_w = getattr(self.config.env, 'talking_wall_width', 0.5)
-        # 粗判“对话对”：彼此速度小、相互面对（这里简单用速度都很小近似静立交谈）
+        # Identify "talking pairs": both speeds are less than 0.6 and they are close to each other
         talking_pairs = []
-        static_like = lambda human: (np.hypot(human.vx, human.vy) < 0.05) and (not getattr(human, 'isObstacle', False))
+        static_like = lambda human: (np.hypot(human.vx, human.vy) < 0.6) and (not getattr(human, 'isObstacle', False))
         cand = [h for h in self.humans if static_like(h)]
         for i in range(len(cand)):
             for j in range(i + 1, len(cand)):
                 hi, hj = cand[i], cand[j]
                 d = np.hypot(hi.px - hj.px, hi.py - hj.py)
-                if d <= 1.5:  # 两人距离较近
+                if d <= 1.5:  # The two are close enough to be talking
                     talking_pairs.append((hi, hj))
 
         def seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
-            # 简单双向跨立判定
+            # Simple bi-directional cross-standing judgment
             def cross(x1,y1,x2,y2,x3,y3): return (x2-x1)*(y3-y1)-(y2-y1)*(x3-x1)
             c1 = cross(ax,ay,bx,by,cx,cy); c2 = cross(ax,ay,bx,by,dx,dy)
             c3 = cross(cx,cy,dx,dy,ax,ay); c4 = cross(cx,cy,dx,dy,bx,by)
             return (c1*c2<=0) and (c3*c4<=0)
 
-        # 机器人步进线段
+        # Robot stepping line segment
         ax, ay, bx, by = rx, ry, x_next, y_next
 
         for (hi, hj) in talking_pairs:
-            # 对话线段
+            # Talking line segment
             cx, cy, dx, dy = hi.px, hi.py, hj.px, hj.py
-            # 近似“带宽”处理：把对话线两侧各扩张 wall_w，可用平移向量创建两条平行线段做快速近似（这里取中心线直接判交，命中即降速躲避）
-            if seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
-                # 第一策略：保角度降速
-                v = min(v, 0.2)
-                # 如果仍然会穿越，可在主循环外再做一次“右偏一点”的微调，这里留给简单实现
-                break
+            # Approximate "bandwidth" processing: expand the talking line on both sides by wall_w, and create two parallel line segments using the translation vector for quick approximation (here the centerline is directly judged for intersection, and a hit means slowing down and avoiding)
+            # Determine which person is more important to decide the obstacle avoidance direction
+            if hi.priority_coef > hj.priority_coef:
+                # hi is more important, the robot should avoid hi's direction and choose to detour to the right
+                if hi.px < hj.px:  # hi is on the left
+                    if seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+                        v = min(v, 0.2) 
+                        w = max(w, -0.2) 
+                        break
+                else:
+                    if seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+                        v = min(v, 0.2)
+                        w = min(w, 0.2)
+                        break
+            else:
+                if hi.px > hj.px:  # hj is on the left
+                    if seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+                        v = min(v, 0.2)
+                        w = max(w, -0.2)  
+                        break
+                else:
+                    if seg_intersect(ax, ay, bx, by, cx, cy, dx, dy):
+                        v = min(v, 0.2)
+                        w = min(w, 0.2)
+                        break
 
         # -----------------------------
-        # 4) Corridor：靠右通行（小角速度偏置）
+        # 4) Corridor: Keep to the right (small angular velocity bias)
         # -----------------------------
         if scene == 'corridor':
-            # 右偏一个很小的角速度（不覆盖 agent 的转向，只是 bias）
-            w = w - 0.05  # 让机器人向右微偏，数值可调
+            # Apply a small angular velocity bias to the right (does not cover the agent's turning, just a bias)
+            w = w - 0.05  # Let the robot slightly deviate to the right, adjustable value
 
         return v, w
     
@@ -1087,25 +1098,25 @@ class CrowdSim3DTB(CrowdSimVarNum):
         view_matrix, proj_matrix: 从 PyBullet 得到的 list of 16 floats, row-major.
         返回: (N,2) 图像坐标 (pixel_x, pixel_y)
         """
-        # 转为 4x4 矩阵
+        # Convert to a 4x4 matrix
         V = np.array(view_matrix, dtype=np.float32).reshape((4,4), order='F')
         P = np.array(projection_matrix, dtype=np.float32).reshape((4,4), order='F')
 
         pts = np.concatenate([pts3d, np.ones((len(pts3d),1),dtype=np.float32)], axis=1)  # (N,4)
         clip = pts @ V.T @ P.T           # (N,4)
-        ndc = clip[:, :3] / clip[:, 3:4] # 归一化设备坐标 (N,3) in [-1..1]
+        ndc = clip[:, :3] / clip[:, 3:4] # Normalized device coordinates (N,3) in [-1..1]
 
-        # 像素坐标
+        # Pixel coordinates
         x_pix = ( ndc[:,0] + 1 ) * 0.5 * img_w
         y_pix = ( 1 - (ndc[:,1] + 1)*0.5 ) * img_h
         return np.stack([x_pix, y_pix], axis=1)
 
     def show_label(self, rgbim, view_matrix, projection_matrix):
-        # 1) 准备要投影的“人头”3D点
+        # 1) Prepare the 3D points of the "human head" to be projected
         pts3d = np.array([[h.px, h.py, self.config.humans.height + 0.5] 
                         for h in self.humans])
 
-        # 2) 把当前用的 view/proj 矩阵传进去，算出像素
+        # 2) Pass the current view/proj matrices to compute pixel coordinates
         pix_coords = self.project_points(
             pts3d=pts3d, 
             view_matrix=view_matrix, 
@@ -1113,16 +1124,16 @@ class CrowdSim3DTB(CrowdSimVarNum):
             img_w=self.render_img_w, 
             img_h=self.render_img_h)
 
-        # 3) 用 PIL 画文字
+        # 3) Drawing text with PIL
         draw = ImageDraw.Draw(rgbim)
-        font = ImageFont.load_default()  # 或者加载更大一点的 ttf
+        font = ImageFont.load_default() 
 
         for (x_pix, y_pix), human in zip(pix_coords, self.humans):
             if human.activity:
                 txt = str(human.activity)
                 draw.text((x_pix, y_pix), txt, fill=(255,0,0), font=font)
 
-        rob3d = np.array([[self.robot.px, self.robot.py, self.config.humans.height]])  # 机器人“身高”处
+        rob3d = np.array([[self.robot.px, self.robot.py, self.config.humans.height]])  # Robot's height
         rob_px = self.project_points(
             rob3d, view_matrix, projection_matrix,
             img_w=self.render_img_w, img_h=self.render_img_h
@@ -1203,17 +1214,23 @@ class CrowdSim3DTB(CrowdSimVarNum):
         rgbim = rgbim.crop((250/900*self.render_img_w, 200/900*self.render_img_h, 600/900*self.render_img_w, 600/900*self.render_img_h))
         rgbim = rgbim.resize((self.render_img_w, self.render_img_h), Image.LANCZOS)
         rgbim = rgbim.filter(ImageFilter.SHARPEN)
+        
         save_dir = os.path.join(self.config.training.output_dir, 'test_slideshows',
                                 str(self.min_human_num) + 'to' + str(self.max_human_num) + 'humans_' +
                                 str(self.min_obs_num) + 'to' + str(self.max_obs_num) + 'obs',
                                 self.config.camera.render_checkpoint,
                                 str(self.rand_seed) + '_' + str(self.case_counter['test'] - 1))
+        '''
+        save_dir = 'data/ours_RH_HH_cornerEnv/test_slideshows/cornerEnV_static'
+        save_dir_robot_fov = 'data/ours_RH_HH_cornerEnv/test_slideshows/cornerEnV_static/robot_fov'
+        '''
         save_dir_robot_fov = os.path.join(self.config.training.output_dir, 'test_slideshows',
                                 str(self.min_human_num) + 'to' + str(self.max_human_num) + 'humans_' +
                                 str(self.min_obs_num) + 'to' + str(self.max_obs_num) + 'obs',
                                 self.config.camera.render_checkpoint,
                                 str(self.rand_seed) + '_' + str(self.case_counter['test'] - 1),
                                 'robot_fov')
+        
         self.save_dir = save_dir
         self.save_dir_robot_fov = save_dir_robot_fov
         if not os.path.exists(save_dir):
@@ -1248,10 +1265,10 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         VLM_is_used = False
 
-        # !!! close it before training, otherwise it will cause delay
+        # !!! comment it before training, otherwise it will cause delay
         #rgbim = self.keep_rendering()
-        # ！！！在测试的时候不能注释！！！
-        #rgbim, _, _ = self.get_camera_image_with_labels()
+        #!!! You cannot comment during testing!!! 
+        rgbim, _, _ = self.get_camera_image_with_labels()
 
         # compute reward and episode info
         if self.config.env.test_in_pybullet:
@@ -1273,7 +1290,7 @@ class CrowdSim3DTB(CrowdSimVarNum):
             self.desiredVelocity[1] = np.clip(self.desiredVelocity[1] + delta_w, self.config.robot.w_min, self.config.robot.w_max)
             
             
-            # === 新增“社会过滤” ===
+            # Social Filtering
             v, w = self._social_filter_vw(self.desiredVelocity[0], self.desiredVelocity[1])
             self.desiredVelocity[0], self.desiredVelocity[1] = v, w
 
@@ -1397,9 +1414,10 @@ class CrowdSim3DTB(CrowdSimVarNum):
 
         # if test.py requires to save slides, save top-down camera image to disk
         # only save the first 20 episodes
+        
         if self.config.camera.render_checkpoint is not None and self.case_counter['test']<self.config.env.test_size:
             self.render_scene(VLM_is_used)
-
+        
         if done:
             # move all cylinders to a dummy pos if an episode ends
             for i in range(self.human_num):
