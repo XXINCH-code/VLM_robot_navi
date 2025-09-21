@@ -1,11 +1,26 @@
-2025-08-18 17:05:13, INFO: robot FOV 2.000000
-2025-08-18 17:05:13, INFO: humans FOV 2.000000
-2025-08-18 17:05:13, INFO: Create other envs with new settings
-2025-08-18 17:05:13, INFO: Not randomize human's radius and preferred speed
-2025-08-18 17:05:13, INFO: Circle width: 4
-2025-08-18 17:05:13, INFO: robot FOV 6.283185
-2025-08-18 17:05:13, INFO: humans FOV 6.283185
-2025-08-18 17:05:16, INFO: Not randomize human's radius and preferred speed
-2025-08-18 17:05:16, INFO: Circle width: 4
-2025-08-18 17:05:16, INFO: robot FOV 6.283185
-2025-08-18 17:05:16, INFO: humans FOV 6.283185
+2025-09-08 11:53:45, INFO: robot FOV 2.000000
+2025-09-08 11:53:45, INFO: humans FOV 2.000000
+2025-09-08 11:53:45, INFO: Create other envs with new settings
+2025-09-08 11:53:45, INFO: Not randomize human's radius and preferred speed
+2025-09-08 11:53:45, INFO: Circle width: 4
+2025-09-08 11:53:45, INFO: robot FOV 6.283185
+2025-09-08 11:53:45, INFO: humans FOV 6.283185
+2025-09-08 11:53:49, INFO: Not randomize human's radius and preferred speed
+2025-09-08 11:53:49, INFO: Circle width: 4
+2025-09-08 11:53:49, INFO: robot FOV 6.283185
+2025-09-08 11:53:49, INFO: humans FOV 6.283185
+2025-09-08 11:53:51, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-08 11:54:42, INFO: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2025-09-08 11:56:29, INFO: Not randomize human's radius and preferred speed
+2025-09-08 11:56:29, INFO: Circle width: 4
+2025-09-08 11:56:29, INFO: robot FOV 6.283185
+2025-09-08 11:56:29, INFO: humans FOV 6.283185
+2025-09-08 11:56:29, INFO: TEST  has success rate: 1.00, collision rate: 0.00, discomfort ratio: 0.00, timeout rate: 0.00, nav time: 22.00
+2025-09-08 11:56:29, INFO: collision rate with humans: 0.00, with obstacles: 0.00, with walls: 0.00, 
+2025-09-08 11:56:29, INFO: average intrusion ratio: 0.00 and average minimal distance during intrusions: nan
+2025-09-08 11:56:29, INFO: TEST  has average path length: 14.65
+2025-09-08 11:56:29, INFO: Collision cases: 
+2025-09-08 11:56:29, INFO: Collision with Human cases: 
+2025-09-08 11:56:29, INFO: Collision with Obstacle cases: 
+2025-09-08 11:56:29, INFO: Collision with Wall cases: 
+2025-09-08 11:56:29, INFO: Timeout cases: 
